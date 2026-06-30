@@ -1,0 +1,154 @@
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using MudBlazor
+@using PoultryFarm.Blazor.Services
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<DashboardHeader Title="Worker Dashboard"
+                 Subtitle="Daily workspace for production entry, feed records, health observations, sales, and reports."
+                 ShowActionButton="true"
+                 ActionText="Record Activity"
+                 ActionIcon="@Icons.Material.Filled.EditNote" />
+
+<MudPaper Elevation="0" Class="dashboard-overview-panel mb-4">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" lg="4">
+            <MudText Typo="Typo.overline" Color="Color.Secondary">Today at a glance</MudText>
+            <MudText Typo="Typo.h5" Class="font-bold">@AuthSession.WorkspaceTitle</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Record production, feed use, health observations, and customer sales from the same daily workspace.
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="2">
+            <div class="dashboard-overview-stat">
+                <MudIcon Icon="@Icons.Material.Filled.Egg" Color="Color.Success" />
+                <span>Eggs Today</span>
+                <strong>@((_stats?.TodayEggProduction ?? 0).ToString("N0"))</strong>
+            </div>
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="2">
+            <div class="dashboard-overview-stat">
+                <MudIcon Icon="@Icons.Material.Filled.Restaurant" Color="Color.Warning" />
+                <span>Feed 7 Days</span>
+                <strong>@((_stats?.WeeklyFeedConsumption ?? 0).ToString("N1")) kg</strong>
+            </div>
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="2">
+            <div class="dashboard-overview-stat">
+                <MudIcon Icon="@Icons.Material.Filled.PointOfSale" Color="Color.Primary" />
+                <span>Sales Today</span>
+                <strong>GHS @((_stats?.TodaySalesRevenue ?? 0).ToString("N2"))</strong>
+            </div>
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="2">
+            <div class="dashboard-overview-stat">
+                <MudIcon Icon="@Icons.Material.Filled.TaskAlt" Color="@TaskColor" />
+                <span>Open Tasks</span>
+                <strong>@OpenTasks.ToString("N0")</strong>
+            </div>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<MudGrid Spacing="3">
+    @foreach (var stat in Stats)
+    {
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="@stat.Label"
+                                 Value="@stat.Value"
+                                 Detail="@stat.Detail"
+                                 Icon="@stat.Icon"
+                                 Color="@stat.Color" />
+        </MudItem>
+    }
+</MudGrid>
+
+<MudGrid Spacing="3" Class="mt-4">
+    <MudItem xs="12" lg="8">
+        <DashboardModuleTable Title="Assigned Work Modules"
+                              Items="@Modules" />
+    </MudItem>
+
+    <MudItem xs="12" lg="4">
+        <DashboardMessagesCard Title="Task Messages"
+                               AlertMessage="Use the operations pages to record today's work. Farm admins see these signals in their dashboard."
+                               Items="@Messages" />
+    </MudItem>
+</MudGrid>
+
+@code {
+    private DashboardStats? _stats;
+    private int OpenTasks => (_stats?.OverdueMedications ?? 0) + (_stats?.OverdueDebeaking ?? 0);
+    private Color TaskColor => OpenTasks > 0 ? Color.Warning : Color.Success;
+
+    private IReadOnlyCollection<DashboardMetricItem> Stats =>
+    [
+        new("Birds Under Care", (_stats?.TotalActiveBirds ?? 0).ToString("N0"), Icons.Material.Filled.Pets, Color.Primary, $"{(_stats?.ActiveBatches ?? 0):N0} active batches"),
+        new("Egg Entries Today", (_stats?.TodayEggProduction ?? 0).ToString("N0"), Icons.Material.Filled.Egg, Color.Success, $"{(_stats?.ProductionRate ?? 0):N1}% lay rate"),
+        new("Egg Stock", Crates(_stats?.EggInventory ?? 0), Icons.Material.Filled.Inventory2, Color.Info, $"{(_stats?.EggInventory ?? 0):N0} eggs available"),
+        new("Sales Today", $"GHS {(_stats?.TodaySalesRevenue ?? 0):N2}", Icons.Material.Filled.PointOfSale, Color.Warning, $"{(_stats?.WeeklyEggsSold ?? 0):N0} eggs sold in 7 days")
+    ];
+
+    private IReadOnlyCollection<DashboardModuleItem> Modules =>
+    [
+        new("Egg production entry", $"{(_stats?.TodayEggProduction ?? 0):N0} eggs recorded today", "High", Color.Success),
+        new("Feed usage record", $"{(_stats?.WeeklyFeedConsumption ?? 0):N1} kg recorded in 7 days", "High", Color.Success),
+        new("Bird health observations", $"{(_stats?.WeeklyHealthEvents ?? 0):N0} events this week", "High", (_stats?.WeeklyHealthEvents ?? 0) > 0 ? Color.Warning : Color.Success),
+        new("Medication and debeaking", $"{OpenTasks:N0} overdue assigned tasks", "High", OpenTasks > 0 ? Color.Warning : Color.Success),
+        new("Sales support", $"GHS {(_stats?.WeeklySalesRevenue ?? 0):N2} weekly revenue", "Medium", Color.Info)
+    ];
+
+    private IReadOnlyCollection<DashboardMessageItem> Messages =>
+    [
+        new($"Production today: {(_stats?.TodayEggProduction ?? 0):N0} eggs from {(_stats?.TotalActiveBirds ?? 0):N0} active birds.", Icons.Material.Filled.Egg),
+        new($"Inventory to watch: {Crates(_stats?.EggInventory ?? 0)} eggs and {(_stats?.FeedStockKg ?? 0):N1} kg feed on hand.", Icons.Material.Filled.Inventory),
+        new($"Sales support: {(_stats?.WeeklyEggsSold ?? 0):N0} eggs and {(_stats?.WeeklyBirdsSold ?? 0):N0} birds sold this week.", Icons.Material.Filled.PointOfSale)
+    ];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await LoadStatsAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadStatsAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+            _stats = await client.GetFromJsonAsync<DashboardStats>("/api/dashboard/stats");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Worker dashboard metrics could not load: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private sealed record DashboardStats(
+        int TotalActiveBirds,
+        int TodayEggProduction,
+        decimal WeeklyFeedConsumption,
+        int OverdueMedications,
+        int OverdueDebeaking,
+        int LowFeedStock,
+        int CurrentBatchAge,
+        decimal ProductionRate,
+        int ActiveBatches,
+        int EggInventory,
+        decimal FeedStockKg,
+        decimal TodaySalesRevenue,
+        decimal WeeklySalesRevenue,
+        int WeeklyEggsSold,
+        int WeeklyBirdsSold,
+        int WeeklyHealthEvents);
+
+    private static string Crates(int eggs) => $"{eggs / 30m:N2} crates";
+}

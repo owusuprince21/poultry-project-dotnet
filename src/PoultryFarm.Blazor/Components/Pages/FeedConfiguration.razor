@@ -1,0 +1,205 @@
+@page "/feed-configuration"
+@using System.Net.Http.Headers
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Feed Configuration</PageTitle>
+
+<ModulePageShell Title="Feed Type Configuration" Subtitle="Configure feed names and bag sizes used by stock arrivals and daily consumption records.">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" lg="4">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <div>
+                        <MudText Typo="Typo.h6" Class="font-semibold">@(_editingId.HasValue ? "Update Feed Type" : "Add Feed Type")</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">These options populate Feed Management.</MudText>
+                    </div>
+                    @if (_editingId.HasValue)
+                    {
+                        <MudButton Variant="Variant.Text" Color="Color.Secondary" OnClick="ResetForm">Cancel</MudButton>
+                    }
+                </MudStack>
+
+                <MudGrid Spacing="2">
+                    <MudItem xs="12">
+                        <MudTextField T="string" Label="Feed Type Name" @bind-Value="_model.Name" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudNumericField T="int" Label="Bag Size (KG)" @bind-Value="_model.BagSizeKg" Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudSwitch T="bool" Label="Active" @bind-Value="_model.IsActive" Color="Color.Primary" />
+                    </MudItem>
+                </MudGrid>
+
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" Disabled="@_saving" OnClick="SaveAsync" Class="mt-3">
+                    @(_editingId.HasValue ? "Update Feed Type" : "Save Feed Type")
+                </MudButton>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="8">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <div>
+                        <MudText Typo="Typo.h6" Class="font-semibold">Configured Feed Types</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Farm-specific feed names and standard bag sizes.</MudText>
+                    </div>
+                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" />
+                </MudStack>
+
+                <MudTable Items="_items" Dense="true" Hover="true" Loading="_loading" Elevation="0">
+                    <HeaderContent>
+                        <MudTh>Feed Type</MudTh>
+                        <MudTh>Bag Size</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Name</MudTd>
+                        <MudTd>@context.BagSizeKg kg</MudTd>
+                        <MudTd>
+                            <MudChip T="string" Size="Size.Small" Color="@(context.IsActive ? Color.Success : Color.Default)" Variant="Variant.Outlined">
+                                @(context.IsActive ? "Active" : "Inactive")
+                            </MudChip>
+                        </MudTd>
+                        <MudTd>
+                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => Edit(context))">Update</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteAsync(context.Id))">Delete</MudMenuItem>
+                            </MudMenu>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <EmptyState Icon="@Icons.Material.Filled.Inventory" Title="No feed types configured" Description="Add feed names and bag sizes before recording stock arrivals." />
+                    </NoRecordsContent>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</ModulePageShell>
+
+@code {
+    private readonly FeedConfigForm _model = new();
+    private List<FeedConfigurationOption> _items = [];
+    private Guid? _editingId;
+    private bool _loading;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (!AuthSession.IsFarmAdmin)
+        {
+            Navigation.NavigateTo("/dashboard", replace: true);
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _items = (await CreateApiClient().GetFromJsonAsync<FeedOptions>("/api/feed/options"))?.Configurations ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Feed configuration error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_model.Name) || _model.BagSizeKg <= 0)
+        {
+            Snackbar.Add("Feed name and bag size are required.", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var response = _editingId.HasValue
+                ? await CreateApiClient().PutAsJsonAsync($"/api/feed/configurations/{_editingId}", _model)
+                : await CreateApiClient().PostAsJsonAsync("/api/feed/configurations", _model);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Feed configuration could not be saved."), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(_editingId.HasValue ? "Feed type updated." : "Feed type added.", Severity.Success);
+            ResetForm();
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Edit(FeedConfigurationOption item)
+    {
+        _editingId = item.Id;
+        _model.Name = item.Name;
+        _model.BagSizeKg = item.BagSizeKg;
+        _model.IsActive = item.IsActive;
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        var response = await CreateApiClient().DeleteAsync($"/api/feed/configurations/{id}");
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Feed configuration could not be deleted."), Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Feed type deleted.", Severity.Success);
+        ResetForm();
+        await LoadAsync();
+    }
+
+    private void ResetForm()
+    {
+        _editingId = null;
+        _model.Name = string.Empty;
+        _model.BagSizeKg = 50;
+        _model.IsActive = true;
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private sealed record FeedOptions(List<FeedTypeOption> FeedTypes, List<FeedConfigurationOption> Configurations);
+    private sealed record FeedTypeOption(int FeedType, string Label, List<int> BagSizes);
+    private sealed record FeedConfigurationOption(Guid Id, Guid CompanyId, string Name, int BagSizeKg, bool IsActive);
+
+    private sealed class FeedConfigForm
+    {
+        public string Name { get; set; } = string.Empty;
+        public int BagSizeKg { get; set; } = 50;
+        public bool IsActive { get; set; } = true;
+    }
+}

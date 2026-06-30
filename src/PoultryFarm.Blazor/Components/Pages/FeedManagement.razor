@@ -1,0 +1,530 @@
+@page "/feed"
+@using System.Net.Http.Headers
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Feed Management</PageTitle>
+
+<ModulePageShell Title="Feed Management" Subtitle="Track feed stock arrivals and daily consumption by batch, bird color, feed type, and bag size.">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="3">
+            <DashboardMetricCard Label="Feeds In Stock" Value="@($"{_metrics.TotalBagsInStock:N0}")" Detail="bags remaining" Icon="@Icons.Material.Filled.Inventory2" Color="Color.Success" />
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <DashboardMetricCard Label="Total KG In Stock" Value="@($"{_metrics.TotalKgInStock:N1}")" Detail="available feed weight" Icon="@Icons.Material.Filled.Scale" Color="Color.Primary" />
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <DashboardMetricCard Label="Weekly Average" Value="@($"{_metrics.WeeklyAverageKg:N1} kg")" Detail="daily consumption average" Icon="@Icons.Material.Filled.Timeline" Color="Color.Info" />
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <DashboardMetricCard Label="Today's Usage Feed" Value="@($"{_metrics.TodayUsageKg:N1} kg")" Detail="filtered by selected batch" Icon="@Icons.Material.Filled.Restaurant" Color="Color.Warning" />
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Elevation="0" Class="work-surface pa-4 mt-4">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="6">
+                <MudSelect T="Guid?" Label="Batch" Value="_selectedBatchId" ValueChanged="OnBatchChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true">
+                    @foreach (var batch in _batches)
+                    {
+                        <MudSelectItem T="Guid?" Value="@batch.Id">@batch.BatchNumber - @batch.Breed</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudSelect T="Guid?" Label="Bird Color" @bind-Value="_selectedVariantId" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true">
+                    @foreach (var variant in SelectedBatchVariants)
+                    {
+                        <MudSelectItem T="Guid?" Value="@variant.Id">@DisplayColor(variant.Color)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="3" Class="mt-1">
+        <MudItem xs="12" lg="5">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudTabs @bind-ActivePanelIndex="_activeTab" Elevation="0" Rounded="true" ApplyEffectsToContainer="true">
+                    <MudTabPanel Text="Daily Feed Consumption" Icon="@Icons.Material.Filled.Restaurant">
+                        <MudText Typo="Typo.h6" Class="font-semibold mt-3">@(_editingConsumptionId.HasValue ? "Update Feed Consumption" : "Feed Consumption Record")</MudText>
+                        <MudGrid Spacing="2" Class="mt-1">
+                            <MudItem xs="12" md="6">
+                                <MudDatePicker Label="Date" @bind-Date="_consumptionDate" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Label="Batch" Value="@SelectedBatchText" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="true" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Label="Bird Color" Value="@SelectedColorText" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="true" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudSelect T="Guid?" Label="Feed Type" Value="_consumption.FeedConfigurationId" ValueChanged="OnConsumptionFeedChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true">
+                                    @foreach (var feedType in ActiveFeedConfigurations)
+                                    {
+                                        <MudSelectItem T="Guid?" Value="@feedType.Id">@feedType.Name</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Label="Feed Bag Size" Value="@($"{ConsumptionBagSize} kg")" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="true" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudNumericField T="int" Label="Bag Used" @bind-Value="_consumption.BagsUsed" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" />
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudTextField T="string" Label="Total KG" Value="@ConsumptionTotalKg.ToString("N1")" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="true" />
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudTextField T="string" Label="Feed Condition / Note" @bind-Value="_consumption.Notes" Variant="Variant.Outlined" Margin="Margin.Dense" Lines="3" />
+                            </MudItem>
+                        </MudGrid>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" Class="mt-3" Disabled="@_saving" OnClick="SaveConsumptionAsync">
+                            @(_editingConsumptionId.HasValue ? "Update Consumption" : "Save Consumption")
+                        </MudButton>
+                        @if (_editingConsumptionId.HasValue)
+                        {
+                            <MudButton Variant="Variant.Text" Color="Color.Secondary" Class="mt-3 ml-2" OnClick="ResetConsumptionForm">Cancel</MudButton>
+                        }
+                    </MudTabPanel>
+
+                    <MudTabPanel Text="Feed Stock" Icon="@Icons.Material.Filled.Inventory">
+                        <MudText Typo="Typo.h6" Class="font-semibold mt-3">@(_editingStockId.HasValue ? "Update Feed Stock" : "Feed Stock Arrival")</MudText>
+                        <MudGrid Spacing="2" Class="mt-1">
+                            <MudItem xs="12" md="6">
+                                <MudDatePicker Label="Date Arrived" @bind-Date="_stockDate" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudSelect T="Guid?" Label="Feed Type" Value="_stock.FeedConfigurationId" ValueChanged="OnStockFeedChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true">
+                                    @foreach (var feedType in ActiveFeedConfigurations)
+                                    {
+                                        <MudSelectItem T="Guid?" Value="@feedType.Id">@feedType.Name</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Label="Supplier" @bind-Value="_stock.Supplier" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Label="Feed Bag Size" Value="@($"{StockBagSize} kg")" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="true" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudNumericField T="int" Label="Bags In" @bind-Value="_stock.BagsIn" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudNumericField T="decimal" Label="Cost per Bag (GHS)" @bind-Value="_stock.CostPerBag" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Label="Total KG" Value="@StockTotalKg.ToString("N1")" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="true" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Label="Total Cost" Value="@StockTotalCost.ToString("N2")" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="true" />
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudTextField T="string" Label="Feed Condition" @bind-Value="_stock.Condition" Variant="Variant.Outlined" Margin="Margin.Dense" Lines="3" />
+                            </MudItem>
+                        </MudGrid>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" Class="mt-3" Disabled="@_saving" OnClick="SaveStockAsync">
+                            @(_editingStockId.HasValue ? "Update Stock" : "Save Stock")
+                        </MudButton>
+                        @if (_editingStockId.HasValue)
+                        {
+                            <MudButton Variant="Variant.Text" Color="Color.Secondary" Class="mt-3 ml-2" OnClick="ResetStockForm">Cancel</MudButton>
+                        }
+                    </MudTabPanel>
+                </MudTabs>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="7">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <div>
+                        <MudText Typo="Typo.h6" Class="font-semibold">@(_activeTab == 0 ? "Daily Consumption Table" : "Feed Stock Table")</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">10 rows per page with update and delete actions.</MudText>
+                    </div>
+                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" />
+                </MudStack>
+
+                @if (_activeTab == 0)
+                {
+                    <MudTable Items="_consumptionRows" Dense="true" Hover="true" Loading="_loading" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>Date</MudTh>
+                            <MudTh>Batch</MudTh>
+                            <MudTh>Feed</MudTh>
+                            <MudTh>Bags</MudTh>
+                            <MudTh>Total KG</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
+                            <MudTd>@context.BatchNumber</MudTd>
+                            <MudTd>@context.FeedTypeLabel</MudTd>
+                            <MudTd>@context.BagsUsed.ToString("N0") x @context.BagSizeKg kg</MudTd>
+                            <MudTd>@context.TotalKg.ToString("N1")</MudTd>
+                            <MudTd>
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => EditConsumption(context))">Update</MudMenuItem>
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteConsumptionAsync(context.Id))">Delete</MudMenuItem>
+                                </MudMenu>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                    <MudPagination Count="@ConsumptionTotalPages" Selected="_consumptionPage" SelectedChanged="ChangeConsumptionPageAsync" Class="mt-3" />
+                }
+                else
+                {
+                    <MudTable Items="_stockRows" Dense="true" Hover="true" Loading="_loading" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>Date</MudTh>
+                            <MudTh>Feed</MudTh>
+                            <MudTh>Supplier</MudTh>
+                            <MudTh>Remaining</MudTh>
+                            <MudTh>Total Cost</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.DateArrived.ToString("MMM d, yyyy")</MudTd>
+                            <MudTd>@context.FeedTypeLabel</MudTd>
+                            <MudTd>@context.Supplier</MudTd>
+                            <MudTd>@context.BagsRemaining.ToString("N0") / @context.BagsIn.ToString("N0") bags</MudTd>
+                            <MudTd>GHS @context.TotalCost.ToString("N2")</MudTd>
+                            <MudTd>
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => EditStock(context))">Update</MudMenuItem>
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteStockAsync(context.Id))">Delete</MudMenuItem>
+                                </MudMenu>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                    <MudPagination Count="@StockTotalPages" Selected="_stockPage" SelectedChanged="ChangeStockPageAsync" Class="mt-3" />
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</ModulePageShell>
+
+@code {
+    private readonly FeedConsumptionForm _consumption = new();
+    private readonly FeedStockForm _stock = new();
+    private List<BatchOption> _batches = [];
+    private List<FeedConfigurationOption> _feedConfigurations = [];
+    private List<FeedConsumptionRow> _consumptionRows = [];
+    private List<FeedStockRow> _stockRows = [];
+    private FeedMetrics _metrics = new();
+    private Guid? _selectedBatchId;
+    private Guid? _selectedVariantId;
+    private DateTime? _consumptionDate = DateTime.Today;
+    private DateTime? _stockDate = DateTime.Today;
+    private Guid? _editingConsumptionId;
+    private Guid? _editingStockId;
+    private int _activeTab;
+    private int _consumptionPage = 1;
+    private int _stockPage = 1;
+    private int _consumptionTotal;
+    private int _stockTotal;
+    private bool _loading;
+    private bool _saving;
+    private const int PageSize = 10;
+
+    private int ConsumptionTotalPages => Math.Max(1, (int)Math.Ceiling(_consumptionTotal / (double)PageSize));
+    private int StockTotalPages => Math.Max(1, (int)Math.Ceiling(_stockTotal / (double)PageSize));
+    private int ConsumptionBagSize => _feedConfigurations.FirstOrDefault(x => x.Id == _consumption.FeedConfigurationId)?.BagSizeKg ?? 0;
+    private int StockBagSize => _feedConfigurations.FirstOrDefault(x => x.Id == _stock.FeedConfigurationId)?.BagSizeKg ?? 0;
+    private decimal ConsumptionTotalKg => ConsumptionBagSize * _consumption.BagsUsed;
+    private decimal StockTotalKg => StockBagSize * _stock.BagsIn;
+    private decimal StockTotalCost => _stock.CostPerBag * _stock.BagsIn;
+    private string SelectedBatchText => _batches.FirstOrDefault(x => x.Id == _selectedBatchId) is { } batch ? $"{batch.BatchNumber} - {batch.Breed}" : "Select batch";
+    private string SelectedColorText => SelectedBatchVariants.FirstOrDefault(x => x.Id == _selectedVariantId) is { } variant ? DisplayColor(variant.Color) : "Select bird color";
+    private IEnumerable<BatchVariantOption> SelectedBatchVariants => _batches.FirstOrDefault(x => x.Id == _selectedBatchId)?.Variants ?? [];
+    private IEnumerable<FeedConfigurationOption> ActiveFeedConfigurations => _feedConfigurations.Where(x => x.IsActive).OrderBy(x => x.Name).ThenBy(x => x.BagSizeKg);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var client = CreateApiClient();
+            _batches = await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [];
+            _feedConfigurations = (await client.GetFromJsonAsync<FeedOptions>("/api/feed/options"))?.Configurations ?? [];
+            _metrics = await client.GetFromJsonAsync<FeedMetrics>($"/api/feed/metrics{(_selectedBatchId.HasValue ? $"?batchId={_selectedBatchId}" : string.Empty)}") ?? new();
+            var consumption = await client.GetFromJsonAsync<PagedConsumptionResponse>($"/api/feed/consumptions?page={_consumptionPage}&pageSize={PageSize}");
+            _consumptionRows = consumption?.Items ?? [];
+            _consumptionTotal = consumption?.Total ?? 0;
+            var stocks = await client.GetFromJsonAsync<PagedStockResponse>($"/api/feed/stocks?page={_stockPage}&pageSize={PageSize}");
+            _stockRows = stocks?.Items ?? [];
+            _stockTotal = stocks?.Total ?? 0;
+            EnsureDefaults();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Feed management error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnBatchChanged(Guid? value)
+    {
+        _selectedBatchId = value;
+        _selectedVariantId = SelectedBatchVariants.FirstOrDefault()?.Id;
+        await LoadAsync();
+    }
+
+    private Task OnConsumptionFeedChanged(Guid? value)
+    {
+        _consumption.FeedConfigurationId = value;
+        return Task.CompletedTask;
+    }
+
+    private Task OnStockFeedChanged(Guid? value)
+    {
+        _stock.FeedConfigurationId = value;
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveConsumptionAsync()
+    {
+        if (_selectedVariantId is null || _consumptionDate is null || _consumption.FeedConfigurationId is null)
+        {
+            Snackbar.Add("Select batch, bird color, and date.", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var payload = _consumption with
+            {
+                BatchVariantId = _selectedVariantId.Value,
+                Date = DateOnly.FromDateTime(_consumptionDate.Value)
+            };
+            var response = _editingConsumptionId.HasValue
+                ? await CreateApiClient().PutAsJsonAsync($"/api/feed/consumptions/{_editingConsumptionId}", payload)
+                : await CreateApiClient().PostAsJsonAsync("/api/feed/consumptions", payload);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Feed consumption could not be saved."), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(_editingConsumptionId.HasValue ? "Feed consumption updated." : "Feed consumption saved.", Severity.Success);
+            ResetConsumptionForm();
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task SaveStockAsync()
+    {
+        if (_stockDate is null || _stock.FeedConfigurationId is null)
+        {
+            Snackbar.Add("Select stock arrival date.", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var payload = _stock with { DateArrived = DateOnly.FromDateTime(_stockDate.Value) };
+            var response = _editingStockId.HasValue
+                ? await CreateApiClient().PutAsJsonAsync($"/api/feed/stocks/{_editingStockId}", payload)
+                : await CreateApiClient().PostAsJsonAsync("/api/feed/stocks", payload);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Feed stock could not be saved."), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(_editingStockId.HasValue ? "Feed stock updated." : "Feed stock saved.", Severity.Success);
+            ResetStockForm();
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void EditConsumption(FeedConsumptionRow row)
+    {
+        _activeTab = 0;
+        _editingConsumptionId = row.Id;
+        _selectedBatchId = row.BatchId;
+        _selectedVariantId = row.BatchVariantId;
+        _consumptionDate = row.Date.ToDateTime(TimeOnly.MinValue);
+        _consumption.FeedConfigurationId = row.FeedConfigurationId;
+        _consumption.BagsUsed = row.BagsUsed;
+        _consumption.Notes = row.Notes;
+    }
+
+    private void EditStock(FeedStockRow row)
+    {
+        _activeTab = 1;
+        _editingStockId = row.Id;
+        _stockDate = row.DateArrived.ToDateTime(TimeOnly.MinValue);
+        _stock.FeedConfigurationId = row.FeedConfigurationId;
+        _stock.Supplier = row.Supplier;
+        _stock.BagsIn = row.BagsIn;
+        _stock.CostPerBag = row.CostPerBag;
+        _stock.Condition = row.Condition;
+    }
+
+    private async Task DeleteConsumptionAsync(Guid id)
+    {
+        var response = await CreateApiClient().DeleteAsync($"/api/feed/consumptions/{id}");
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Feed consumption could not be deleted."), Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Feed consumption deleted.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task DeleteStockAsync(Guid id)
+    {
+        var response = await CreateApiClient().DeleteAsync($"/api/feed/stocks/{id}");
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Feed stock could not be deleted."), Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Feed stock deleted.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task ChangeConsumptionPageAsync(int page)
+    {
+        _consumptionPage = page;
+        await LoadAsync();
+    }
+
+    private async Task ChangeStockPageAsync(int page)
+    {
+        _stockPage = page;
+        await LoadAsync();
+    }
+
+    private void ResetConsumptionForm()
+    {
+        _editingConsumptionId = null;
+        _consumptionDate = DateTime.Today;
+        _consumption.Reset();
+        EnsureDefaults();
+    }
+
+    private void ResetStockForm()
+    {
+        _editingStockId = null;
+        _stockDate = DateTime.Today;
+        _stock.Reset();
+        EnsureDefaults();
+    }
+
+    private void EnsureDefaults()
+    {
+        if (_selectedBatchId is null)
+        {
+            _selectedBatchId = _batches.FirstOrDefault()?.Id;
+        }
+
+        if (_selectedVariantId is null)
+        {
+            _selectedVariantId = SelectedBatchVariants.FirstOrDefault()?.Id;
+        }
+
+        _consumption.FeedConfigurationId ??= ActiveFeedConfigurations.FirstOrDefault()?.Id;
+        _stock.FeedConfigurationId ??= ActiveFeedConfigurations.FirstOrDefault()?.Id;
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static string DisplayColor(int color) =>
+        color switch
+        {
+            0 => "White",
+            1 => "Brown",
+            2 => "Black",
+            3 => "Speckled",
+            4 => "Mixed",
+            _ => "Mixed"
+        };
+
+    private sealed record BatchOption(Guid Id, string BatchNumber, int BirdType, DateOnly ArrivalDate, string Breed, string? Supplier, DateOnly ExpectedSaleDate, int Status, int InitialCount, int CurrentCount, decimal SurvivalRate, List<BatchVariantOption> Variants);
+    private sealed record BatchVariantOption(Guid Id, int Color, int EggColor, int InitialCount, int CurrentCount, string? Notes);
+    private sealed record FeedOptions(List<FeedTypeOption> FeedTypes, List<FeedConfigurationOption> Configurations);
+    private sealed record FeedTypeOption(int FeedType, string Label, List<int> BagSizes);
+    private sealed record FeedConfigurationOption(Guid Id, Guid CompanyId, string Name, int BagSizeKg, bool IsActive);
+    private sealed record FeedMetrics(int TotalBagsInStock = 0, decimal TotalKgInStock = 0, decimal WeeklyAverageKg = 0, decimal TodayUsageKg = 0);
+    private sealed record PagedConsumptionResponse(List<FeedConsumptionRow> Items, int Total, int Page, int PageSize);
+    private sealed record PagedStockResponse(List<FeedStockRow> Items, int Total, int Page, int PageSize);
+    private sealed record FeedConsumptionRow(Guid Id, Guid CompanyId, Guid BatchId, string BatchNumber, Guid BatchVariantId, int BirdColor, DateOnly Date, int FeedType, Guid? FeedConfigurationId, string FeedTypeLabel, int BagSizeKg, int BagsUsed, decimal TotalKg, string? Notes);
+    private sealed record FeedStockRow(Guid Id, Guid CompanyId, DateOnly DateArrived, int FeedType, Guid? FeedConfigurationId, string FeedTypeLabel, string Supplier, int BagSizeKg, int BagsIn, int BagsRemaining, decimal CostPerBag, decimal TotalCost, decimal TotalKgRemaining, string? Condition);
+
+    private sealed record FeedConsumptionForm
+    {
+        public Guid BatchVariantId { get; init; }
+        public DateOnly Date { get; init; } = DateOnly.FromDateTime(DateTime.Today);
+        public Guid? FeedConfigurationId { get; set; }
+        public int BagsUsed { get; set; }
+        public string? Notes { get; set; }
+
+        public void Reset()
+        {
+            FeedConfigurationId = null;
+            BagsUsed = 0;
+            Notes = null;
+        }
+    }
+
+    private sealed record FeedStockForm
+    {
+        public DateOnly DateArrived { get; init; } = DateOnly.FromDateTime(DateTime.Today);
+        public Guid? FeedConfigurationId { get; set; }
+        public string? Supplier { get; set; }
+        public int BagsIn { get; set; }
+        public decimal CostPerBag { get; set; }
+        public string? Condition { get; set; }
+
+        public void Reset()
+        {
+            FeedConfigurationId = null;
+            Supplier = null;
+            BagsIn = 0;
+            CostPerBag = 0;
+            Condition = null;
+        }
+    }
+
+}

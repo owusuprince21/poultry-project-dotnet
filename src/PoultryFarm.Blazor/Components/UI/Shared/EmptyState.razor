@@ -1,0 +1,25 @@
+<div class="empty-state">
+    @if (!string.IsNullOrWhiteSpace(Icon))
+    {
+        <MudIcon Icon="@Icon" Color="@Color" Size="Size.Large" />
+    }
+    <MudText Typo="Typo.subtitle1" Class="font-semibold">@Title</MudText>
+    @if (!string.IsNullOrWhiteSpace(Description))
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">@Description</MudText>
+    }
+    @if (ChildContent is not null)
+    {
+        <div class="empty-state-actions">
+            @ChildContent
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public string Title { get; set; } = "No data";
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public Color Color { get; set; } = Color.Secondary;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

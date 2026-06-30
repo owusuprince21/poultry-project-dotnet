@@ -1,0 +1,419 @@
+@page "/farm-assistance"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Net
+@using System.Text
+@using System.Text.RegularExpressions
+@using Microsoft.AspNetCore.Components.Web
+@using PoultryFarm.Blazor.Components.UI.Shared
+@using PoultryFarm.Blazor.Services
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Farm Assistance</PageTitle>
+
+@if (!_loaded)
+{
+    <PageLoader Message="Loading farm assistant..." />
+}
+else if (!AuthSession.IsFarmAdmin && !AuthSession.IsWorker)
+{
+    <ModulePageShell Title="Farm Assistance" Subtitle="AI guidance is available to farm admins and workers.">
+        <ModuleStatusPanel Title="Not available" Description="System administrators use Team Chat for support. Farm Assistance is scoped to farm operations." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Farm Assistance" Subtitle="Company-scoped AI guidance for poultry operations.">
+        <MudPaper Elevation="0" Class="farm-assistant-shell rounded-lg border border-slate-200">
+            <div class="farm-assistant-header">
+                <div class="assistant-orb">
+                    <MudIcon Icon="@Icons.Material.Filled.SmartToy" />
+                </div>
+                <div>
+                    <MudText Typo="Typo.h6" Class="font-semibold">Farm Operations Assistant</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Reviews your farm activity data and gives practical poultry work guidance.
+                    </MudText>
+                </div>
+                <MudSpacer />
+                <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">
+                    AG-UI agent
+                </MudChip>
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.DeleteSweep" Disabled="@(!_messages.Any())" OnClick="ClearHistoryAsync">
+                    Clear History
+                </MudButton>
+            </div>
+
+            <div class="farm-assistant-messages" @ref="_messagesContainer">
+                @if (_messages.Count == 0)
+                {
+                    <div class="assistant-empty-state">
+                        <MudIcon Icon="@Icons.Material.Filled.Psychology" Color="Color.Primary" Size="Size.Large" />
+                        <MudText Typo="Typo.subtitle1">Ask about production, mortality, feed, medication, sales, or daily farm routines.</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Your conversation history is saved here for this farm account.</MudText>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var message in _messages)
+                    {
+                        <div class="assistant-message-row @(message.Sender == "user" ? "mine" : "assistant")">
+                            <div class="assistant-message">
+                                <div class="assistant-message-top">
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@(message.Sender == "user" ? "You" : "Farm Assistant")</MudText>
+                                </div>
+                                @if (message.Sender == "user")
+                                {
+                                    <MudText Typo="Typo.body2" Class="assistant-message-body">@message.Body</MudText>
+                                }
+                                else
+                                {
+                                    <div class="assistant-message-body assistant-markdown">
+                                        @RenderAssistantMessage(message.Body)
+                                    </div>
+                                }
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@message.SentAt.LocalDateTime.ToString("MMM d, yyyy h:mm tt")</MudText>
+                            </div>
+                        </div>
+                    }
+                }
+
+                @if (_thinking)
+                {
+                    <div class="assistant-message-row assistant">
+                        <div class="assistant-message assistant-thinking">
+                            <MudText Typo="Typo.body2" Class="font-semibold">
+                                Assistance Thinking<span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span>
+                            </MudText>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="farm-assistant-compose">
+                <MudTextField @bind-Value="_prompt"
+                              Placeholder="Ask the assistant about what is happening in the farm..."
+                              Variant="Variant.Outlined"
+                              Lines="2"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              OnKeyDown="HandlePromptKeyDown"
+                              Class="assistant-compose-input" />
+                <MudIconButton Icon="@Icons.Material.Filled.Send"
+                               Color="Color.Primary"
+                               Size="Size.Large"
+                               Disabled="@_sending"
+                               OnClick="SendAsync" />
+            </div>
+        </MudPaper>
+    </ModulePageShell>
+}
+
+@code {
+    private List<AssistanceMessage> _messages = [];
+    private string _prompt = string.Empty;
+    private bool _loaded;
+    private bool _sending;
+    private bool _thinking;
+    private ElementReference _messagesContainer;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (AuthSession.MustChangePassword)
+        {
+            Navigation.NavigateTo("/force-password-change", replace: true);
+            return;
+        }
+
+        if (AuthSession.IsFarmAdmin || AuthSession.IsWorker)
+        {
+            await LoadAsync();
+        }
+
+        _loaded = true;
+        await InvokeAsync(StateHasChanged);
+        await ScrollMessagesAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _messages = await CreateApiClient().GetFromJsonAsync<List<AssistanceMessage>>("/api/assistance/messages") ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Farm Assistance could not load history: {ex.Message}", Severity.Error);
+            _messages = [];
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_prompt))
+        {
+            return;
+        }
+
+        var prompt = _prompt.Trim();
+        var pendingUserMessage = new AssistanceMessage(Guid.NewGuid(), "user", prompt, DateTimeOffset.UtcNow);
+
+        _prompt = string.Empty;
+        _messages.Add(pendingUserMessage);
+        _sending = true;
+        _thinking = true;
+        await InvokeAsync(StateHasChanged);
+        await ScrollMessagesAsync();
+
+        try
+        {
+            var startedAt = DateTimeOffset.UtcNow;
+            var response = await CreateApiClient().PostAsJsonAsync("/api/assistance/messages", new { body = prompt });
+            var elapsed = DateTimeOffset.UtcNow - startedAt;
+            if (elapsed.TotalMilliseconds < 1200)
+            {
+                await Task.Delay(1200 - (int)elapsed.TotalMilliseconds);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Assistant request failed."), Severity.Error);
+                _messages.Remove(pendingUserMessage);
+                _prompt = prompt;
+                return;
+            }
+
+            var newMessages = await response.Content.ReadFromJsonAsync<List<AssistanceMessage>>() ?? [];
+            _messages.Remove(pendingUserMessage);
+            _thinking = false;
+            await InvokeAsync(StateHasChanged);
+            await AddMessagesWithTypingAsync(newMessages);
+            await InvokeAsync(StateHasChanged);
+            await ScrollMessagesAsync();
+        }
+        finally
+        {
+            _sending = false;
+            _thinking = false;
+            await InvokeAsync(StateHasChanged);
+            await ScrollMessagesAsync();
+        }
+    }
+
+    private async Task HandlePromptKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && !args.ShiftKey)
+        {
+            await SendAsync();
+        }
+    }
+
+    private async Task ClearHistoryAsync()
+    {
+        var response = await CreateApiClient().DeleteAsync("/api/assistance/messages");
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "History could not be cleared."), Severity.Error);
+            return;
+        }
+
+        _messages.Clear();
+        Snackbar.Add("Assistance history cleared.", Severity.Success);
+        await ScrollMessagesAsync();
+    }
+
+    private async Task ScrollMessagesAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("poultryFarmUi.scrollToBottom", _messagesContainer);
+        }
+        catch (InvalidOperationException)
+        {
+            // The component may still be prerendering or disposed.
+        }
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private async Task AddMessagesWithTypingAsync(List<AssistanceMessage> newMessages)
+    {
+        var userMessages = newMessages.Where(x => x.Sender == "user").ToList();
+        var assistantMessages = newMessages.Where(x => x.Sender != "user").ToList();
+
+        foreach (var userMessage in userMessages)
+        {
+            if (_messages.All(x => x.Id != userMessage.Id))
+            {
+                _messages.Add(userMessage);
+            }
+        }
+
+        foreach (var assistantMessage in assistantMessages)
+        {
+            await AddAssistantMessageWithTypingAsync(assistantMessage);
+        }
+    }
+
+    private async Task AddAssistantMessageWithTypingAsync(AssistanceMessage assistantMessage)
+    {
+        var visibleMessage = assistantMessage with { Body = string.Empty };
+        _messages.Add(visibleMessage);
+
+        var chunkSize = assistantMessage.Body.Length > 900 ? 8 : 4;
+        for (var index = 0; index < assistantMessage.Body.Length; index += chunkSize)
+        {
+            var current = assistantMessage.Body[..Math.Min(index + chunkSize, assistantMessage.Body.Length)];
+            ReplaceMessage(assistantMessage.Id, assistantMessage with { Body = current });
+            await InvokeAsync(StateHasChanged);
+            await ScrollMessagesAsync();
+            await Task.Delay(18);
+        }
+
+        ReplaceMessage(assistantMessage.Id, assistantMessage);
+    }
+
+    private void ReplaceMessage(Guid id, AssistanceMessage replacement)
+    {
+        var index = _messages.FindIndex(x => x.Id == id);
+        if (index >= 0)
+        {
+            _messages[index] = replacement;
+        }
+    }
+
+    private static MarkupString RenderAssistantMessage(string text) =>
+        new(ToAssistantHtml(text));
+
+    private static string ToAssistantHtml(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var html = new StringBuilder();
+        var inUnorderedList = false;
+        var inOrderedList = false;
+
+        foreach (var rawLine in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+            {
+                CloseLists();
+                continue;
+            }
+
+            if (line.StartsWith("### ", StringComparison.Ordinal))
+            {
+                CloseLists();
+                html.Append("<h3>").Append(InlineMarkdown(line[4..])).Append("</h3>");
+                continue;
+            }
+
+            if (line.StartsWith("## ", StringComparison.Ordinal))
+            {
+                CloseLists();
+                html.Append("<h2>").Append(InlineMarkdown(line[3..])).Append("</h2>");
+                continue;
+            }
+
+            if (line.StartsWith("# ", StringComparison.Ordinal))
+            {
+                CloseLists();
+                html.Append("<h2>").Append(InlineMarkdown(line[2..])).Append("</h2>");
+                continue;
+            }
+
+            if (line.StartsWith("* ", StringComparison.Ordinal) || line.StartsWith("- ", StringComparison.Ordinal))
+            {
+                if (!inUnorderedList)
+                {
+                    CloseOrderedList();
+                    html.Append("<ul>");
+                    inUnorderedList = true;
+                }
+
+                html.Append("<li>").Append(InlineMarkdown(line[2..])).Append("</li>");
+                continue;
+            }
+
+            var numberedMatch = Regex.Match(line, @"^\d+\.\s+(.+)$");
+            if (numberedMatch.Success)
+            {
+                if (!inOrderedList)
+                {
+                    CloseUnorderedList();
+                    html.Append("<ol>");
+                    inOrderedList = true;
+                }
+
+                html.Append("<li>").Append(InlineMarkdown(numberedMatch.Groups[1].Value)).Append("</li>");
+                continue;
+            }
+
+            CloseLists();
+            html.Append("<p>").Append(InlineMarkdown(line)).Append("</p>");
+        }
+
+        CloseLists();
+        return html.ToString();
+
+        void CloseLists()
+        {
+            CloseUnorderedList();
+            CloseOrderedList();
+        }
+
+        void CloseUnorderedList()
+        {
+            if (inUnorderedList)
+            {
+                html.Append("</ul>");
+                inUnorderedList = false;
+            }
+        }
+
+        void CloseOrderedList()
+        {
+            if (inOrderedList)
+            {
+                html.Append("</ol>");
+                inOrderedList = false;
+            }
+        }
+    }
+
+    private static string InlineMarkdown(string value)
+    {
+        var encoded = WebUtility.HtmlEncode(value);
+        encoded = Regex.Replace(encoded, @"\*\*(.+?)\*\*", "<strong>$1</strong>");
+        encoded = Regex.Replace(encoded, @"`(.+?)`", "<code>$1</code>");
+        return encoded;
+    }
+}

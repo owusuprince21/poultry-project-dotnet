@@ -1,0 +1,413 @@
+@page "/settings"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using PoultryFarm.Blazor.Components.UI.Shared
+@using PoultryFarm.Blazor.Services
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Settings</PageTitle>
+
+@if (!_loaded)
+{
+    <PageLoader Message="Loading settings..." />
+}
+else if (!AuthSession.IsAuthenticated)
+{
+    <ModulePageShell Title="Settings" Subtitle="Authentication required.">
+        <ModuleStatusPanel Title="Sign in required" Description="Please sign in to manage your profile and security." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Settings" Subtitle="Profile, password, and account security.">
+        <MudGrid Spacing="3">
+            <MudItem xs="12" lg="4">
+                <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
+                    <MudStack Spacing="3" AlignItems="AlignItems.Center">
+                        <MudAvatar Size="Size.Large" Color="Color.Primary" Class="settings-avatar">
+                            @ProfileInitials
+                        </MudAvatar>
+                        <div class="settings-profile-summary">
+                            <MudText Typo="Typo.h6">@ProfileDisplayName</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">@(_profile.Username)</MudText>
+                        </div>
+                        <MudDivider />
+                        <MudStack Spacing="2" Class="w-100">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">Security status</MudText>
+                                <MudChip T="string" Size="Size.Small" Color="@(_twoFactorEnabled ? Color.Success : Color.Warning)" Variant="Variant.Outlined">
+                                    @(_twoFactorEnabled ? "2FA enabled" : "2FA disabled")
+                                </MudChip>
+                            </MudStack>
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">Workspace</MudText>
+                                <MudText Typo="Typo.body2">@AuthSession.WorkspaceTitle</MudText>
+                            </MudStack>
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">Role</MudText>
+                                <MudText Typo="Typo.body2">@DisplayRole(AuthSession.Role)</MudText>
+                            </MudStack>
+                        </MudStack>
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" lg="8">
+                <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
+                    <MudStack Spacing="4">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                            <div>
+                                <MudText Typo="Typo.h6">Account Details</MudText>
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">Keep your profile information accurate for audit trails and team visibility.</MudText>
+                            </div>
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.Save"
+                                       Disabled="_savingProfile"
+                                       OnClick="SaveProfileAsync">
+                                @(_savingProfile ? "Saving..." : "Save Profile")
+                            </MudButton>
+                        </MudStack>
+
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="6">
+                                <MudTextField @bind-Value="_profile.Username" Label="Username" Variant="Variant.Outlined" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField @bind-Value="_profile.Email" Label="Email" Variant="Variant.Outlined" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField @bind-Value="_profile.FirstName" Label="First name" Variant="Variant.Outlined" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField @bind-Value="_profile.LastName" Label="Last name" Variant="Variant.Outlined" />
+                            </MudItem>
+                        </MudGrid>
+
+                        <MudDivider />
+
+                        <div>
+                            <MudText Typo="Typo.h6">Password</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">Change your password without affecting your active profile details.</MudText>
+                        </div>
+
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="4">
+                                <MudTextField @bind-Value="_password.CurrentPassword" Label="Current password" Variant="Variant.Outlined" InputType="InputType.Password" />
+                            </MudItem>
+                            <MudItem xs="12" md="4">
+                                <MudTextField @bind-Value="_password.NewPassword" Label="New password" Variant="Variant.Outlined" InputType="InputType.Password" />
+                            </MudItem>
+                            <MudItem xs="12" md="4">
+                                <MudTextField @bind-Value="_password.ConfirmPassword" Label="Confirm password" Variant="Variant.Outlined" InputType="InputType.Password" />
+                            </MudItem>
+                        </MudGrid>
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Password"
+                                   Disabled="_changingPassword"
+                                   OnClick="ChangePasswordAsync">
+                            @(_changingPassword ? "Changing..." : "Change Password")
+                        </MudButton>
+
+                        <MudDivider />
+
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                            <div>
+                                <MudText Typo="Typo.subtitle1">Two-Factor Authentication</MudText>
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                    Require a six-digit authenticator code during sign in.
+                                </MudText>
+                            </div>
+                            <MudChip T="string" Color="@(_twoFactorEnabled ? Color.Success : Color.Warning)" Variant="Variant.Outlined">
+                                @(_twoFactorEnabled ? "Protected" : "Not protected")
+                            </MudChip>
+                        </MudStack>
+
+                        @if (!_twoFactorEnabled)
+                        {
+                            @if (_setup is null)
+                            {
+                                <MudButton Variant="Variant.Filled"
+                                           Color="Color.Success"
+                                           StartIcon="@Icons.Material.Filled.QrCodeScanner"
+                                           OnClick="SetupTwoFactorAsync">
+                                    Setup Authenticator
+                                </MudButton>
+                            }
+                        }
+                        else
+                        {
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Error"
+                                       StartIcon="@Icons.Material.Filled.NoEncryption"
+                                       OnClick="@(() => _showDisableCode = true)">
+                                Disable 2FA
+                            </MudButton>
+                        }
+
+                        @if (_setup is not null)
+                        {
+                            <MudGrid Spacing="3" Class="settings-2fa-panel">
+                                <MudItem xs="12" md="5">
+                                    <div class="settings-qr-preview">
+                                        @((MarkupString)_setup.QrCodeSvg)
+                                    </div>
+                                </MudItem>
+                                <MudItem xs="12" md="7">
+                                    <MudStack Spacing="2">
+                                        <MudText Typo="Typo.subtitle1">Scan QR code</MudText>
+                                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                            Scan this QR code with Microsoft Authenticator, Google Authenticator, 1Password, or any compatible TOTP app.
+                                        </MudText>
+                                        <MudTextField Value="@_setup.SharedKey" Label="Manual setup key" Variant="Variant.Outlined" ReadOnly="true" />
+                                        <MudText Typo="Typo.body2" Color="Color.Secondary">Enter the generated 6-digit code to finish activation.</MudText>
+                                        @CodeBoxes
+                                        <MudStack Row="true" Spacing="2">
+                                            <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.VerifiedUser" OnClick="EnableTwoFactorAsync">
+                                                Enable 2FA
+                                            </MudButton>
+                                            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="CancelTwoFactorSetup">
+                                                Cancel
+                                            </MudButton>
+                                        </MudStack>
+                                    </MudStack>
+                                </MudItem>
+                            </MudGrid>
+                        }
+
+                        @if (_showDisableCode)
+                        {
+                            <div class="settings-disable-panel">
+                                <MudText Typo="Typo.subtitle1">Confirm 2FA disable</MudText>
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">Enter your current 6-digit authenticator code before removing this protection.</MudText>
+                                @CodeBoxes
+                                <MudStack Row="true" Spacing="2">
+                                    <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="DisableTwoFactorAsync">
+                                        Confirm Disable
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="@(() => _showDisableCode = false)">
+                                        Cancel
+                                    </MudButton>
+                                </MudStack>
+                            </div>
+                        }
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </ModulePageShell>
+}
+
+@code {
+    private UpdateProfileModel _profile = new();
+    private ChangePasswordModel _password = new();
+    private TwoFactorSetup? _setup;
+    private bool _loaded;
+    private bool _savingProfile;
+    private bool _changingPassword;
+    private bool _twoFactorEnabled;
+    private bool _showDisableCode;
+    private string _code1 = string.Empty;
+    private string _code2 = string.Empty;
+    private string _code3 = string.Empty;
+    private string _code4 = string.Empty;
+    private string _code5 = string.Empty;
+    private string _code6 = string.Empty;
+
+    private RenderFragment CodeBoxes => @<MudStack Row="true" Spacing="1" Class="two-factor-code">
+        <MudTextField @bind-Value="_code1" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+        <MudTextField @bind-Value="_code2" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+        <MudTextField @bind-Value="_code3" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+        <MudTextField @bind-Value="_code4" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+        <MudTextField @bind-Value="_code5" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+        <MudTextField @bind-Value="_code6" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+    </MudStack>;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (AuthSession.MustChangePassword)
+        {
+            Navigation.NavigateTo("/force-password-change", replace: true);
+            return;
+        }
+
+        await LoadProfileAsync();
+        _loaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadProfileAsync()
+    {
+        var profile = await CreateApiClient().GetFromJsonAsync<AccountProfile>("/api/account/profile");
+        if (profile is null)
+        {
+            return;
+        }
+
+        _profile = new UpdateProfileModel
+        {
+            Username = profile.Username ?? string.Empty,
+            FirstName = profile.FirstName ?? string.Empty,
+            LastName = profile.LastName ?? string.Empty,
+            Email = profile.Email
+        };
+        _twoFactorEnabled = profile.TwoFactorEnabled;
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        _savingProfile = true;
+        try
+        {
+            var response = await CreateApiClient().PutAsJsonAsync("/api/account/profile", _profile);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Profile could not be saved."), Severity.Error);
+                return;
+            }
+
+            await AuthSession.UpdateProfileAsync(_profile.Username, _profile.FirstName, _profile.LastName);
+            Snackbar.Add("Profile updated successfully.", Severity.Success);
+        }
+        finally
+        {
+            _savingProfile = false;
+        }
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        _changingPassword = true;
+        try
+        {
+            var response = await CreateApiClient().PostAsJsonAsync("/api/account/password", _password);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Password could not be changed."), Severity.Error);
+                return;
+            }
+
+            _password = new ChangePasswordModel();
+            Snackbar.Add("Password changed successfully.", Severity.Success);
+        }
+        finally
+        {
+            _changingPassword = false;
+        }
+    }
+
+    private async Task SetupTwoFactorAsync()
+    {
+        var response = await CreateApiClient().PostAsJsonAsync("/api/account/2fa/setup", new { });
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "2FA setup could not be started."), Severity.Error);
+            return;
+        }
+
+        _setup = await response.Content.ReadFromJsonAsync<TwoFactorSetup>();
+        ClearCode();
+    }
+
+    private async Task EnableTwoFactorAsync()
+    {
+        var response = await CreateApiClient().PostAsJsonAsync("/api/account/2fa/enable", new { code = Code });
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "2FA could not be enabled."), Severity.Error);
+            return;
+        }
+
+        _twoFactorEnabled = true;
+        _setup = null;
+        ClearCode();
+        Snackbar.Add("2FA enabled successfully.", Severity.Success);
+    }
+
+    private async Task DisableTwoFactorAsync()
+    {
+        var response = await CreateApiClient().PostAsJsonAsync("/api/account/2fa/disable", new { code = Code });
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "2FA could not be disabled."), Severity.Error);
+            return;
+        }
+
+        _twoFactorEnabled = false;
+        _showDisableCode = false;
+        ClearCode();
+        Snackbar.Add("2FA disabled successfully.", Severity.Success);
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private string Code => string.Concat(_code1, _code2, _code3, _code4, _code5, _code6).Trim();
+
+    private void ClearCode()
+    {
+        _code1 = _code2 = _code3 = _code4 = _code5 = _code6 = string.Empty;
+    }
+
+    private void CancelTwoFactorSetup()
+    {
+        _setup = null;
+        ClearCode();
+    }
+
+    private string ProfileDisplayName
+    {
+        get
+        {
+            var name = $"{_profile.FirstName} {_profile.LastName}".Trim();
+            return string.IsNullOrWhiteSpace(name) ? _profile.Username : name;
+        }
+    }
+
+    private string ProfileInitials
+    {
+        get
+        {
+            var first = string.IsNullOrWhiteSpace(_profile.FirstName) ? null : _profile.FirstName[..1];
+            var last = string.IsNullOrWhiteSpace(_profile.LastName) ? null : _profile.LastName[..1];
+            var initials = $"{first}{last}".Trim();
+            return string.IsNullOrWhiteSpace(initials)
+                ? (_profile.Username.Length > 0 ? _profile.Username[..1].ToUpperInvariant() : "U")
+                : initials.ToUpperInvariant();
+        }
+    }
+
+    private static string DisplayRole(string? role) =>
+        role switch
+        {
+            "super_admin" => "Super Admin",
+            "sub_admin" => "Sub Admin",
+            "system_admin" => "System Admin",
+            "farm_admin" => "Farm Admin",
+            "worker" => "Worker",
+            _ => string.IsNullOrWhiteSpace(role) ? "User" : role
+        };
+}

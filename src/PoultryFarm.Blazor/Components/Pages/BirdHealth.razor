@@ -1,0 +1,256 @@
+@page "/health"
+@using System.Net.Http.Headers
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Bird Health</PageTitle>
+
+<ModulePageShell Title="Bird Health" Subtitle="Record sick birds, mortality, causes, and recovery movement without mixing sickness with actual deaths.">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="6">
+            <DashboardMetricCard Label="Sick Birds" Value="@_metrics.SickBirds.ToString("N0")" Detail="active sick bird balance" Icon="@Icons.Material.Filled.HealthAndSafety" Color="Color.Warning" />
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <DashboardMetricCard Label="Dead Birds" Value="@_metrics.DeadBirds.ToString("N0")" Detail="deducted from batch count" Icon="@Icons.Material.Filled.HeartBroken" Color="Color.Error" />
+        </MudItem>
+    </MudGrid>
+
+    <MudGrid Spacing="3" Class="mt-4">
+        <MudItem xs="12" lg="5">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudTabs @bind-ActivePanelIndex="_formTab" Rounded="true" Elevation="0">
+                    <MudTabPanel Text="Sick birds" Icon="@Icons.Material.Filled.Sick" />
+                    <MudTabPanel Text="Dead birds" Icon="@Icons.Material.Filled.HeartBroken" />
+                </MudTabs>
+
+                <MudStack Spacing="3" Class="mt-4">
+                    <MudSelect T="Guid?" Label="Batch" Value="_selectedBatchId" ValueChanged="OnBatchChanged" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var batch in _batches)
+                        {
+                            <MudSelectItem T="Guid?" Value="@batch.Id">@batch.BatchNumber - @batch.Breed</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="Guid?" Label="Bird color" @bind-Value="_form.BatchVariantId" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var variant in SelectedVariants)
+                        {
+                            <MudSelectItem T="Guid?" Value="@variant.Id">@DisplayColor(variant.Color) (@variant.CurrentCount.ToString("N0") birds)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudDatePicker @bind-Date="_formDate" Label="Record date" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudNumericField T="int" @bind-Value="_form.Count" Label="Number of birds affected" Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" />
+                    <MudTextField @bind-Value="_form.Cause" Label="@(_formTab == 0 ? "Symptoms / suspected cause" : "Cause of death")" Variant="Variant.Outlined" Margin="Margin.Dense" Lines="4" />
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                        Sick records do not reduce batch birds. Dead records reduce the selected batch color immediately.
+                    </MudAlert>
+                    <MudButton Variant="Variant.Filled" Color="@(_formTab == 0 ? Color.Warning : Color.Error)" StartIcon="@Icons.Material.Filled.Save" Disabled="_saving" OnClick="SaveAsync">
+                        @(_formTab == 0 ? "Record Sick Birds" : "Record Dead Birds")
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="7">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudTabs ActivePanelIndex="_tableTab" ActivePanelIndexChanged="OnTableTabChanged" Rounded="true" Elevation="0">
+                    <MudTabPanel Text="Sick birds" Icon="@Icons.Material.Filled.Sick" />
+                    <MudTabPanel Text="Dead birds" Icon="@Icons.Material.Filled.HeartBroken" />
+                </MudTabs>
+
+                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading" Class="mt-3">
+                    <HeaderContent>
+                        <MudTh>Date</MudTh>
+                        <MudTh>Batch</MudTh>
+                        <MudTh>Color</MudTh>
+                        <MudTh>Birds</MudTh>
+                        <MudTh>Cause</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
+                        <MudTd>@context.BatchNumber</MudTd>
+                        <MudTd>@DisplayColor(context.BirdColor)</MudTd>
+                        <MudTd>@context.Count.ToString("N0")</MudTd>
+                        <MudTd>@context.Cause</MudTd>
+                        <MudTd>
+                            @if (_tableTab == 0 && context.Count > 0)
+                            {
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Healing" OnClick="@(() => BeginResolve(context))">Update recovery/death</MudMenuItem>
+                                </MudMenu>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <EmptyState Icon="@Icons.Material.Filled.HealthAndSafety" Title="No health records" Description="Record sick or dead birds against the exact batch color." />
+                    </NoRecordsContent>
+                </MudTable>
+                <MudPagination Count="@TotalPages" Selected="_page" SelectedChanged="ChangePageAsync" Class="mt-3" />
+            </MudPaper>
+
+            @if (_resolveTarget is not null)
+            {
+                <MudPaper Elevation="0" Class="work-surface pa-4 mt-3">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                        <div>
+                            <MudText Typo="Typo.h6" Class="font-semibold">Resolve sick birds</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">@_resolveTarget.BatchNumber - @_resolveTarget.Count.ToString("N0") sick birds recorded.</MudText>
+                        </div>
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="@(() => _resolveTarget = null)" />
+                    </MudStack>
+                    <MudGrid Spacing="2" Class="mt-2">
+                        <MudItem xs="12" md="4"><MudNumericField T="int" @bind-Value="_resolve.Recovered" Label="Recovered birds" Variant="Variant.Outlined" Min="0" /></MudItem>
+                        <MudItem xs="12" md="4"><MudNumericField T="int" @bind-Value="_resolve.Died" Label="Died birds" Variant="Variant.Outlined" Min="0" /></MudItem>
+                        <MudItem xs="12" md="4"><MudTextField @bind-Value="_resolve.Note" Label="Note" Variant="Variant.Outlined" /></MudItem>
+                    </MudGrid>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.TaskAlt" Class="mt-3" OnClick="ResolveAsync">Apply Update</MudButton>
+                </MudPaper>
+            }
+        </MudItem>
+    </MudGrid>
+</ModulePageShell>
+
+@code {
+    private HealthMetrics _metrics = new();
+    private List<BatchOption> _batches = [];
+    private List<HealthRow> _records = [];
+    private HealthForm _form = new();
+    private ResolveForm _resolve = new();
+    private HealthRow? _resolveTarget;
+    private Guid? _selectedBatchId;
+    private DateTime? _formDate = DateTime.Today;
+    private int _formTab;
+    private int _tableTab;
+    private int _page = 1;
+    private const int PageSize = 10;
+    private int _total;
+    private bool _loading;
+    private bool _saving;
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+    private IEnumerable<BatchVariantOption> SelectedVariants => _batches.FirstOrDefault(x => x.Id == _selectedBatchId)?.Variants ?? [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", true);
+            return;
+        }
+        await LoadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var client = CreateApiClient();
+            _batches = await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [];
+            _metrics = await client.GetFromJsonAsync<HealthMetrics>("/api/bird-health/metrics") ?? new();
+            var type = _tableTab == 1 ? "dead" : "sick";
+            var response = await client.GetFromJsonAsync<PagedHealthResponse>($"/api/bird-health?type={type}&page={_page}&pageSize={PageSize}");
+            _records = response?.Items ?? [];
+            _total = response?.Total ?? 0;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Bird health could not load: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task OnBatchChanged(Guid? batchId)
+    {
+        _selectedBatchId = batchId;
+        _form.BatchVariantId = SelectedVariants.FirstOrDefault()?.Id;
+        return Task.CompletedTask;
+    }
+
+    private async Task OnTableTabChanged(int index)
+    {
+        _tableTab = index;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_form.BatchVariantId is null || _formDate is null || _form.Count <= 0 || string.IsNullOrWhiteSpace(_form.Cause))
+        {
+            Snackbar.Add("Batch color, affected birds, date, and cause are required.", Severity.Warning);
+            return;
+        }
+        _saving = true;
+        try
+        {
+            var payload = new { _form.BatchVariantId, Date = DateOnly.FromDateTime(_formDate.Value), Status = _formTab == 1 ? "dead" : "sick", _form.Count, _form.Cause };
+            var response = await CreateApiClient().PostAsJsonAsync("/api/bird-health", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Health record could not be saved."), Severity.Error);
+                return;
+            }
+            Snackbar.Add(_formTab == 1 ? "Dead birds recorded and batch count updated." : "Sick birds recorded.", Severity.Success);
+            _form = new();
+            _selectedBatchId = null;
+            _formDate = DateTime.Today;
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void BeginResolve(HealthRow row)
+    {
+        _resolveTarget = row;
+        _resolve = new();
+    }
+
+    private async Task ResolveAsync()
+    {
+        if (_resolveTarget is null) return;
+        var response = await CreateApiClient().PostAsJsonAsync($"/api/bird-health/{_resolveTarget.Id}/resolve-sick", _resolve);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Sick bird update could not be saved."), Severity.Error);
+            return;
+        }
+        Snackbar.Add("Sick bird record updated.", Severity.Success);
+        _resolveTarget = null;
+        await LoadAsync();
+    }
+
+    private async Task ChangePageAsync(int page)
+    {
+        _page = page;
+        await LoadAsync();
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static string DisplayColor(int value) => value switch { 0 => "White", 1 => "Brown", 2 => "Black", 3 => "Speckled", _ => "Mixed" };
+
+    private sealed record HealthMetrics(int SickBirds = 0, int DeadBirds = 0);
+    private sealed record PagedHealthResponse(List<HealthRow> Items, int Total, int Page, int PageSize);
+    private sealed record HealthRow(Guid Id, Guid BatchId, string BatchNumber, Guid BatchVariantId, int BirdColor, DateOnly Date, int Status, int Count, string Cause);
+    private sealed record BatchOption(Guid Id, string BatchNumber, int BirdType, DateOnly ArrivalDate, string Breed, string? Supplier, DateOnly ExpectedSaleDate, int Status, int InitialCount, int CurrentCount, decimal SurvivalRate, List<BatchVariantOption> Variants);
+    private sealed record BatchVariantOption(Guid Id, int Color, int EggColor, int InitialCount, int CurrentCount, string? Notes);
+    private sealed class HealthForm { public Guid? BatchVariantId { get; set; } public int Count { get; set; } public string Cause { get; set; } = string.Empty; }
+    private sealed class ResolveForm { public int Recovered { get; set; } public int Died { get; set; } public string? Note { get; set; } }
+}

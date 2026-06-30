@@ -1,0 +1,1094 @@
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.SignalR.Client
+@using PoultryFarm.Blazor.Services
+@implements IAsyncDisposable
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+@inject IWebHostEnvironment Environment
+
+<div class="@WorkspaceClass">
+    @if (_selectedContact is null)
+    {
+    <div class="team-chat-contacts">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+            <MudText Typo="Typo.subtitle1" Class="font-semibold">People</MudText>
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" OnClick="LoadContactsAsync" />
+        </MudStack>
+        <MudTextField T="string"
+                      @bind-Value="_search"
+                      Placeholder="Search users"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Immediate="true"
+                      Class="mb-2" />
+
+        @if (_loadingContacts)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_contacts.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary">No chat contacts available.</MudText>
+        }
+        else
+        {
+            <MudStack Spacing="1">
+                @foreach (var contact in OrderedContacts)
+                {
+                    <button type="button" class="@ContactClass(contact)" @onclick="@(() => SelectContactAsync(contact))">
+                        <div class="chat-contact-avatar">
+                            @Initials(contact)
+                            <span class="presence-dot @(contact.IsOnline ? "online" : "offline")"></span>
+                        </div>
+                        <div class="chat-contact-main">
+                            <div class="chat-contact-name">@DisplayName(contact)</div>
+                            <div class="chat-contact-meta">@DisplayRole(contact.Role)@CompanySuffix(contact)</div>
+                            @if (IsTyping(contact.Id))
+                            {
+                                <div class="chat-contact-preview typing">Typing...</div>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(contact.LastMessagePreview))
+                            {
+                                <div class="chat-contact-preview">@contact.LastMessagePreview</div>
+                            }
+                        </div>
+                        @if (UnreadCount(contact.Id) > 0)
+                        {
+                            <span class="chat-contact-unread">@UnreadCount(contact.Id)</span>
+                        }
+                        else
+                        {
+                            <div class="chat-contact-seen">@LastSeenText(contact)</div>
+                        }
+                    </button>
+                }
+            </MudStack>
+        }
+    </div>
+    }
+    else
+    {
+    <div class="team-chat-thread">
+            <div class="chat-thread-header">
+                <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
+                               Size="Size.Small"
+                               Color="Color.Default"
+                               OnClick="BackToContacts" />
+                <div class="chat-contact-avatar large">
+                    @Initials(_selectedContact)
+                    <span class="presence-dot @(_selectedContact.IsOnline ? "online" : "offline")"></span>
+                </div>
+                <div>
+                    <MudText Typo="Typo.subtitle1" Class="font-semibold">@DisplayName(_selectedContact)</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@DisplayRole(_selectedContact.Role)@CompanySuffix(_selectedContact) • @LastSeenText(_selectedContact)</MudText>
+                </div>
+            </div>
+
+            <div class="chat-thread-messages" @ref="_messagesContainer">
+                @if (_loadingMessages)
+                {
+                    <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                }
+                else if (_messages.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">No messages yet. Start the conversation.</MudText>
+                }
+                else
+                {
+                    @foreach (var message in _messages)
+                    {
+                        <div class="chat-bubble-row @(message.IsMine ? "mine" : "theirs")">
+                            <div class="chat-message-wrap">
+                            <div class="chat-bubble">
+                                <div class="chat-hover-reactions bottom">
+                                    @foreach (var emoji in QuickReactionEmojis)
+                                    {
+                                        <button type="button" @onclick="@(() => ReactAsync(message, emoji))">@emoji</button>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(message.ReplyPreview))
+                                {
+                                    <button type="button" class="chat-reply-preview">
+                                        <span>@(message.ReplySenderDisplayName ?? "Message")</span>
+                                        <small>@TrimPreview(message.ReplyPreview)</small>
+                                    </button>
+                                }
+                                <MudText Typo="Typo.body2">@message.Body</MudText>
+                                <div class="chat-message-meta">
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@message.SentAt.LocalDateTime.ToString("MMM d, h:mm tt")</MudText>
+                                    @if (message.EditedAt.HasValue)
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">edited</MudText>
+                                    }
+                                    <MudIconButton Icon="@Icons.Material.Filled.Reply" Size="Size.Small" Color="Color.Default" OnClick="@(() => StartReply(message))" />
+                                    @if (message.CanEdit || message.CanDelete)
+                                    {
+                                        <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" Size="Size.Small" Class="chat-message-menu">
+                                            @if (message.CanEdit)
+                                            {
+                                                <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => StartEdit(message))">Edit</MudMenuItem>
+                                            }
+                                            @if (message.CanDelete)
+                                            {
+                                                <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteMessageAsync(message))">Delete</MudMenuItem>
+                                            }
+                                        </MudMenu>
+                                    }
+                                </div>
+                            </div>
+                            @if (IsCurrentSeenMessage(message))
+                            {
+                                <div class="chat-read-indicator" title="Seen">
+                                    <MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" />
+                                </div>
+                            }
+                            @if (message.Reactions is { Count: > 0 })
+                            {
+                                <div class="chat-reactions">
+                                    @foreach (var reaction in message.Reactions)
+                                    {
+                                        <button type="button" class="@(reaction.ReactedByMe ? "active" : string.Empty)" @onclick="@(() => ReactAsync(message, reaction.Emoji))">
+                                            <span>@reaction.Emoji</span>
+                                            <small>@reaction.Count</small>
+                                        </button>
+                                    }
+                                </div>
+                            }
+                            </div>
+                        </div>
+                    }
+                    @if (SelectedContactIsTyping)
+                    {
+                        <div class="chat-bubble-row theirs typing-row">
+                            <div class="chat-typing-bubble" title="@($"{_typingDisplayName ?? DisplayName(_selectedContact)} is typing")">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+
+            <div class="chat-compose-row">
+                @if (_replyTo is not null)
+                {
+                    <div class="chat-compose-reply">
+                        <div>
+                            <MudText Typo="Typo.caption" Class="font-semibold">Replying to @(_replyTo.SenderDisplayName ?? (_replyTo.IsMine ? "you" : DisplayName(_selectedContact)))</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@TrimPreview(_replyTo.Body)</MudText>
+                        </div>
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="@ClearReply" />
+                    </div>
+                }
+                @if (_editingMessage is not null)
+                {
+                    <div class="chat-compose-reply editing">
+                        <div>
+                            <MudText Typo="Typo.caption" Class="font-semibold">Editing message</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">You can edit sent messages within 10 minutes.</MudText>
+                        </div>
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="@CancelEdit" />
+                    </div>
+                }
+                @if (_showEmojiPicker)
+                {
+                    <button type="button"
+                            class="chat-emoji-backdrop"
+                            aria-label="Close emoji picker"
+                            @onclick="CloseEmojiPicker"></button>
+                    <div class="chat-emoji-picker" @onclick:stopPropagation="true">
+                        <div class="chat-emoji-picker-header">
+                            <div>
+                                <MudText Typo="Typo.caption" Class="font-semibold">Emoji library</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@Emojis.Count.ToString("N0") emojis</MudText>
+                            </div>
+                            @if (_emojisLoading)
+                            {
+                                <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                            }
+                        </div>
+                        <MudTextField T="string"
+                                      @bind-Value="_emojiSearch"
+                                      Placeholder="Search emojis"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Immediate="true"
+                                      Adornment="Adornment.Start"
+                                      AdornmentIcon="@Icons.Material.Filled.Search"
+                                      Class="chat-emoji-search" />
+                        <div class="chat-emoji-grid">
+                            @foreach (var emoji in FilteredEmojis)
+                            {
+                                <button type="button"
+                                        title="@EmojiTitle(emoji)"
+                                        @onclick="@(() => AddEmoji(emoji.Emoji))">
+                                    @emoji.Emoji
+                                </button>
+                            }
+                        </div>
+                    </div>
+                }
+                <div class="chat-compose-control">
+                    <MudTextField T="string"
+                                  Value="_message"
+                                  ValueChanged="OnMessageChanged"
+                                  Placeholder="Type a message"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="1"
+                                  Immediate="true"
+                                  OnKeyDown="HandleComposerKeyDown"
+                                  Class="chat-compose-input" />
+                    <div class="chat-compose-actions">
+                        <MudIconButton Icon="@Icons.Material.Filled.InsertEmoticon"
+                                       Color="Color.Default"
+                                       Size="Size.Small"
+                                       Class="chat-compose-action"
+                                       OnClick="@(() => _showEmojiPicker = !_showEmojiPicker)" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Send"
+                                       Color="Color.Primary"
+                                       Size="Size.Small"
+                                       Disabled="@_sending"
+                                       Class="chat-compose-action chat-compose-send"
+                                       OnClick="SubmitMessageAsync" />
+                    </div>
+                </div>
+            </div>
+    </div>
+    }
+</div>
+
+@code {
+    [Parameter] public bool Compact { get; set; }
+    [Parameter] public Guid? InitialContactId { get; set; }
+    [Parameter] public EventCallback<TeamChatMessage> MessageReceived { get; set; }
+    [Parameter] public EventCallback<Guid?> ActiveContactChanged { get; set; }
+
+    private List<ChatContact> _contacts = [];
+    private List<TeamChatMessage> _messages = [];
+    private ChatContact? _selectedContact;
+    private HubConnection? _hubConnection;
+    private readonly Dictionary<Guid, int> _unreadByContact = [];
+    private readonly Dictionary<Guid, DateTimeOffset> _lastActivityByContact = [];
+    private readonly Dictionary<Guid, string> _typingByContact = [];
+    private ElementReference _messagesContainer;
+    private string _message = string.Empty;
+    private string _search = string.Empty;
+    private TeamChatMessage? _replyTo;
+    private TeamChatMessage? _editingMessage;
+    private string _emojiSearch = string.Empty;
+    private Guid? _typingContactId;
+    private string? _typingDisplayName;
+    private DateTimeOffset _lastTypingSentAt = DateTimeOffset.MinValue;
+    private CancellationTokenSource? _typingResetCts;
+    private bool _loadingContacts;
+    private bool _loadingMessages;
+    private bool _sending;
+    private bool _showEmojiPicker;
+    private bool _pendingScrollToBottom;
+    private bool _contactsLoaded;
+    private bool _emojisLoading;
+
+    private static readonly string[] QuickReactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+    private static readonly string[] FallbackEmojiValues =
+    [
+        "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣",
+        "😊", "😇", "🙂", "🙃", "😉", "😍", "😘", "😎",
+        "🤔", "😮", "😢", "😭", "😡", "🙏", "👏", "👍",
+        "👎", "👌", "💪", "✅", "⚠️", "🔥", "⭐", "💡",
+        "❤️", "💚", "💙", "🐔", "🐣", "🥚", "🌽", "💊",
+        "💰", "📌", "📋", "📈", "🚚", "🧹", "🩺", "🕒"
+    ];
+    private IReadOnlyList<EmojiOption> Emojis { get; set; } = FallbackEmojiValues
+        .Select(x => new EmojiOption { Emoji = x, Annotation = x, Group = "Fallback" })
+        .ToArray();
+
+    private string WorkspaceClass => Compact ? "team-chat-workspace compact" : "team-chat-workspace";
+
+    private IEnumerable<ChatContact> OrderedContacts =>
+        _contacts
+            .Where(MatchesSearch)
+            .OrderByDescending(x => UnreadCount(x.Id) > 0)
+            .ThenByDescending(x => _lastActivityByContact.TryGetValue(x.Id, out var at) ? at : DateTimeOffset.MinValue)
+            .ThenBy(x => x.Role is "super_admin" or "sub_admin" or "system_admin" ? 0 : 1)
+            .ThenBy(x => DisplayName(x));
+
+    private string ScopeText =>
+        AuthSession.Role switch
+        {
+            "worker" => "Workers can chat with colleagues and farm admins in their company.",
+            "farm_admin" => "Farm admins can chat with workers in their farm and system admins.",
+            "super_admin" or "sub_admin" or "system_admin" => "System admins can chat with all users across the platform.",
+            _ => "Role-scoped messaging."
+        };
+
+    private bool SelectedContactIsTyping => _selectedContact is not null && _typingContactId == _selectedContact.Id;
+
+    private IEnumerable<EmojiOption> FilteredEmojis
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_emojiSearch))
+            {
+                return Emojis;
+            }
+
+            var term = _emojiSearch.Trim();
+            return Emojis.Where(x =>
+                x.Emoji.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                x.Annotation.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                x.Group.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                x.Tags.Any(tag => tag.Contains(term, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            if (_pendingScrollToBottom)
+            {
+                _pendingScrollToBottom = false;
+                await ScrollMessagesAsync();
+            }
+
+            return;
+        }
+
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        await LoadContactsAsync();
+        await InvokeAsync(StateHasChanged);
+        await SelectInitialContactAsync();
+        await ConnectHubAsync();
+        _ = LoadEmojisAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_contactsLoaded || !InitialContactId.HasValue)
+        {
+            return;
+        }
+
+        await SelectInitialContactAsync();
+    }
+
+    private async Task LoadContactsAsync()
+    {
+        _loadingContacts = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            _contacts = await CreateApiClient().GetFromJsonAsync<List<ChatContact>>("/api/chat/contacts") ?? [];
+            _unreadByContact.Clear();
+            _lastActivityByContact.Clear();
+            foreach (var contact in _contacts)
+            {
+                if (contact.UnreadCount > 0)
+                {
+                    _unreadByContact[contact.Id] = contact.UnreadCount;
+                }
+
+                if (contact.LastMessageAt.HasValue)
+                {
+                    _lastActivityByContact[contact.Id] = contact.LastMessageAt.Value;
+                }
+            }
+
+            _contactsLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Chat contacts error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loadingContacts = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SelectContactAsync(ChatContact contact)
+    {
+        _selectedContact = contact;
+        _unreadByContact.Remove(contact.Id);
+        UpdateContact(contact.Id, x => x with { UnreadCount = 0 });
+        await LoadMessagesAsync(contact.Id);
+        await ActiveContactChanged.InvokeAsync(contact.Id);
+    }
+
+    private async Task SelectInitialContactAsync()
+    {
+        if (InitialContactId is not Guid contactId || _selectedContact?.Id == contactId)
+        {
+            return;
+        }
+
+        var contact = _contacts.FirstOrDefault(x => x.Id == contactId);
+        if (contact is not null)
+        {
+            await SelectContactAsync(contact);
+        }
+    }
+
+    private void BackToContacts()
+    {
+        _selectedContact = null;
+        _messages.Clear();
+        _ = ActiveContactChanged.InvokeAsync(null);
+    }
+
+    private async Task LoadMessagesAsync(Guid contactId)
+    {
+        _loadingMessages = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            _messages = await CreateApiClient().GetFromJsonAsync<List<TeamChatMessage>>($"/api/chat/messages/{contactId}") ?? [];
+            if (_messages.LastOrDefault() is { } lastMessage)
+            {
+                _lastActivityByContact[contactId] = lastMessage.SentAt;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Chat history error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loadingMessages = false;
+            _pendingScrollToBottom = true;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SubmitMessageAsync()
+    {
+        if (_editingMessage is not null)
+        {
+            await SaveEditAsync();
+            return;
+        }
+
+        await SendMessageAsync();
+    }
+
+    private async Task SendMessageAsync()
+    {
+        if (_selectedContact is null || string.IsNullOrWhiteSpace(_message))
+        {
+            return;
+        }
+
+        _sending = true;
+        try
+        {
+            var response = await CreateApiClient().PostAsJsonAsync("/api/chat/messages", new
+            {
+                recipientUserId = _selectedContact.Id,
+                body = _message,
+                replyToMessageId = _replyTo?.Id
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Message could not be sent."), Severity.Error);
+                return;
+            }
+
+            var message = await response.Content.ReadFromJsonAsync<TeamChatMessage>();
+            if (message is not null && _messages.All(x => x.Id != message.Id))
+            {
+                _messages.Add(message);
+                _lastActivityByContact[_selectedContact.Id] = message.SentAt;
+                UpdateContact(_selectedContact.Id, contact => contact with
+                {
+                    LastMessagePreview = message.Body,
+                    LastMessageAt = message.SentAt,
+                    UnreadCount = 0
+                });
+                _pendingScrollToBottom = true;
+                await InvokeAsync(StateHasChanged);
+            }
+
+            _message = string.Empty;
+            _replyTo = null;
+            _editingMessage = null;
+            _showEmojiPicker = false;
+            await NotifyTypingAsync(false, force: true);
+        }
+        finally
+        {
+            _sending = false;
+        }
+    }
+
+    private async Task OnMessageChanged(string value)
+    {
+        _message = value;
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            await NotifyTypingAsync(true);
+        }
+    }
+
+    private async Task HandleComposerKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && !args.ShiftKey)
+        {
+            await SubmitMessageAsync();
+        }
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private async Task ConnectHubAsync()
+    {
+        if (_hubConnection is not null || string.IsNullOrWhiteSpace(AuthSession.Token))
+        {
+            return;
+        }
+
+        var apiClient = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        var hubUrl = new Uri(apiClient.BaseAddress!, "/hubs/activity");
+
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(hubUrl, options =>
+            {
+                options.AccessTokenProvider = () => Task.FromResult<string?>(AuthSession.Token);
+            })
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<TeamChatMessage>("chat.message", async message =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await MessageReceived.InvokeAsync(message);
+
+                var contactId = message.IsMine ? message.RecipientUserId : message.SenderUserId;
+                _lastActivityByContact[contactId] = message.SentAt;
+
+                if (_selectedContact is not null &&
+                    contactId == _selectedContact.Id &&
+                    _messages.All(x => x.Id != message.Id))
+                {
+                    _messages.Add(message);
+                    _pendingScrollToBottom = true;
+                    if (!message.IsMine)
+                    {
+                        _ = MarkConversationReadAsync(contactId);
+                    }
+                }
+
+                if (!message.IsMine && (_selectedContact is null || _selectedContact.Id != contactId))
+                {
+                    _unreadByContact[contactId] = UnreadCount(contactId) + 1;
+                }
+
+                UpdateContact(contactId, contact => contact with
+                {
+                    LastMessagePreview = message.Body,
+                    LastMessageAt = message.SentAt,
+                    UnreadCount = UnreadCount(contactId)
+                });
+
+                StateHasChanged();
+            });
+        });
+
+        _hubConnection.On<ChatReadReceipt>("chat.read", receipt =>
+        {
+            return InvokeAsync(() =>
+            {
+                foreach (var message in _messages.Where(x => x.IsMine && x.RecipientUserId == receipt.ContactId && x.ReadAt is null).ToList())
+                {
+                    var index = _messages.FindIndex(x => x.Id == message.Id);
+                    if (index >= 0)
+                    {
+                        _messages[index] = message with { ReadAt = receipt.ReadAt };
+                    }
+                }
+
+                StateHasChanged();
+            });
+        });
+
+        _hubConnection.On<TeamChatMessage>("chat.message.updated", message =>
+        {
+            return InvokeAsync(() =>
+            {
+                UpsertMessage(message);
+                StateHasChanged();
+            });
+        });
+
+        _hubConnection.On<ChatMessageDeleted>("chat.message.deleted", deleted =>
+        {
+            return InvokeAsync(() =>
+            {
+                _messages.RemoveAll(x => x.Id == deleted.MessageId);
+                StateHasChanged();
+            });
+        });
+
+        _hubConnection.On<ChatReactionUpdated>("chat.reaction.updated", updated =>
+        {
+            return InvokeAsync(() =>
+            {
+                var index = _messages.FindIndex(x => x.Id == updated.MessageId);
+                if (index >= 0)
+                {
+                    _messages[index] = _messages[index] with { Reactions = updated.Reactions };
+                }
+
+                StateHasChanged();
+            });
+        });
+
+        _hubConnection.On<TypingSignal>("chat.typing", signal =>
+        {
+            return InvokeAsync(() =>
+            {
+                if (!signal.IsTyping)
+                {
+                    ClearTyping(signal.SenderUserId);
+                    StateHasChanged();
+                    return;
+                }
+
+                _typingContactId = signal.SenderUserId;
+                _typingDisplayName = signal.SenderDisplayName;
+                _typingByContact[signal.SenderUserId] = signal.SenderDisplayName;
+                _typingResetCts?.Cancel();
+                _typingResetCts = new CancellationTokenSource();
+                _ = ResetTypingAsync(signal.SenderUserId, _typingResetCts.Token);
+                if (_selectedContact?.Id == signal.SenderUserId)
+                {
+                    _pendingScrollToBottom = true;
+                }
+                StateHasChanged();
+            });
+        });
+
+        await _hubConnection.StartAsync();
+    }
+
+    private static string DisplayName(ChatContact contact)
+    {
+        var name = $"{contact.FirstName} {contact.LastName}".Trim();
+        return string.IsNullOrWhiteSpace(name) ? contact.Username : name;
+    }
+
+    private static string Initials(ChatContact contact)
+    {
+        var first = string.IsNullOrWhiteSpace(contact.FirstName) ? null : contact.FirstName[..1];
+        var last = string.IsNullOrWhiteSpace(contact.LastName) ? null : contact.LastName[..1];
+        var initials = $"{first}{last}".Trim();
+        return string.IsNullOrWhiteSpace(initials)
+            ? (contact.Username.Length > 0 ? contact.Username[..1].ToUpperInvariant() : "U")
+            : initials.ToUpperInvariant();
+    }
+
+    private static string DisplayRole(string role) =>
+        role switch
+        {
+            "super_admin" => "Super Admin",
+            "sub_admin" => "Sub Admin",
+            "system_admin" => "System Admin",
+            "farm_admin" => "Farm Admin",
+            "worker" => "Worker",
+            _ => role
+        };
+
+    private static string CompanySuffix(ChatContact contact) =>
+        string.IsNullOrWhiteSpace(contact.CompanyName) ? string.Empty : $" • {contact.CompanyName}";
+
+    private static string LastSeenText(ChatContact contact)
+    {
+        if (contact.IsOnline)
+        {
+            return "Online";
+        }
+
+        if (!contact.LastSeenAt.HasValue)
+        {
+            return "Not seen yet";
+        }
+
+        var delta = DateTimeOffset.UtcNow - contact.LastSeenAt.Value;
+        if (delta.TotalMinutes < 1)
+        {
+            return "Last seen now";
+        }
+
+        if (delta.TotalHours < 1)
+        {
+            return $"Last seen {(int)delta.TotalMinutes}m";
+        }
+
+        if (delta.TotalDays < 1)
+        {
+            return $"Last seen {(int)delta.TotalHours}h";
+        }
+
+        return $"Last seen {contact.LastSeenAt.Value.LocalDateTime:MMM d}";
+    }
+
+    private string ContactClass(ChatContact contact) =>
+        $"chat-contact{(_selectedContact?.Id == contact.Id ? " selected" : string.Empty)}{(UnreadCount(contact.Id) > 0 ? " unread" : string.Empty)}";
+
+    private bool MatchesSearch(ChatContact contact)
+    {
+        if (string.IsNullOrWhiteSpace(_search))
+        {
+            return true;
+        }
+
+        var term = _search.Trim();
+        return DisplayName(contact).Contains(term, StringComparison.OrdinalIgnoreCase) ||
+               contact.Username.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+               contact.Role.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+               (contact.CompanyName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    private int UnreadCount(Guid contactId) =>
+        _unreadByContact.TryGetValue(contactId, out var count)
+            ? count
+            : _contacts.FirstOrDefault(x => x.Id == contactId)?.UnreadCount ?? 0;
+
+    private bool IsTyping(Guid contactId) => _typingByContact.ContainsKey(contactId);
+
+    private bool IsCurrentSeenMessage(TeamChatMessage message)
+    {
+        if (!message.IsMine || !message.ReadAt.HasValue)
+        {
+            return false;
+        }
+
+        var latestReadMessage = _messages
+            .Where(x => x.IsMine && x.ReadAt.HasValue)
+            .OrderByDescending(x => x.SentAt)
+            .FirstOrDefault();
+
+        return latestReadMessage?.Id == message.Id;
+    }
+
+    private void UpdateContact(Guid contactId, Func<ChatContact, ChatContact> update)
+    {
+        var index = _contacts.FindIndex(x => x.Id == contactId);
+        if (index >= 0)
+        {
+            _contacts[index] = update(_contacts[index]);
+        }
+    }
+
+    private void StartReply(TeamChatMessage message)
+    {
+        _editingMessage = null;
+        _replyTo = message;
+    }
+
+    private void ClearReply()
+    {
+        _replyTo = null;
+    }
+
+    private void AddEmoji(string emoji)
+    {
+        _message = $"{_message}{emoji}";
+    }
+
+    private async Task LoadEmojisAsync()
+    {
+        _emojisLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var path = Path.Combine(Environment.WebRootPath, "emoji-list.json");
+            var json = await File.ReadAllTextAsync(path);
+            var emojis = JsonSerializer.Deserialize<string[]>(json) ?? [];
+            if (emojis.Length >= 3000)
+            {
+                Emojis = emojis
+                    .Distinct()
+                    .Select(x => new EmojiOption { Emoji = x, Annotation = x, Group = "Local emoji library" })
+                    .ToArray();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            Snackbar.Add($"Emoji library file only has {emojis.Length:N0} emojis. Using fallback emojis.", Severity.Warning);
+            Emojis = FallbackEmojiValues.Select(x => new EmojiOption { Emoji = x, Annotation = x, Group = "Fallback" }).ToArray();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Emoji library could not load, using fallback emojis. {ex.Message}", Severity.Warning);
+            Emojis = FallbackEmojiValues.Select(x => new EmojiOption { Emoji = x, Annotation = x, Group = "Fallback" }).ToArray();
+        }
+        finally
+        {
+            _emojisLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void CloseEmojiPicker()
+    {
+        _showEmojiPicker = false;
+        _emojiSearch = string.Empty;
+    }
+
+    private static string EmojiTitle(EmojiOption emoji)
+    {
+        var title = string.IsNullOrWhiteSpace(emoji.Annotation) ? emoji.Emoji : emoji.Annotation;
+        return string.IsNullOrWhiteSpace(emoji.Group) ? title : $"{title} • {emoji.Group}";
+    }
+
+    private void StartEdit(TeamChatMessage message)
+    {
+        if (!message.CanEdit)
+        {
+            Snackbar.Add("Messages can only be edited within the first 10 minutes.", Severity.Warning);
+            return;
+        }
+
+        _replyTo = null;
+        _editingMessage = message;
+        _message = message.Body;
+    }
+
+    private void CancelEdit()
+    {
+        _editingMessage = null;
+        _message = string.Empty;
+    }
+
+    private async Task SaveEditAsync()
+    {
+        if (_editingMessage is null || string.IsNullOrWhiteSpace(_message))
+        {
+            return;
+        }
+
+        _sending = true;
+        try
+        {
+            var response = await CreateApiClient().PutAsJsonAsync($"/api/chat/messages/{_editingMessage.Id}", new
+            {
+                body = _message
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Message could not be edited."), Severity.Error);
+                return;
+            }
+
+            var updated = await response.Content.ReadFromJsonAsync<TeamChatMessage>();
+            if (updated is not null)
+            {
+                UpsertMessage(updated);
+            }
+
+            _message = string.Empty;
+            _editingMessage = null;
+        }
+        finally
+        {
+            _sending = false;
+        }
+    }
+
+    private async Task DeleteMessageAsync(TeamChatMessage message)
+    {
+        if (!message.CanDelete)
+        {
+            return;
+        }
+
+        var response = await CreateApiClient().DeleteAsync($"/api/chat/messages/{message.Id}");
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Message could not be deleted."), Severity.Error);
+            return;
+        }
+
+        _messages.RemoveAll(x => x.Id == message.Id);
+    }
+
+    private async Task ReactAsync(TeamChatMessage message, string emoji)
+    {
+        var response = await CreateApiClient().PostAsJsonAsync($"/api/chat/messages/{message.Id}/reactions", new
+        {
+            emoji
+        });
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Reaction could not be saved."), Severity.Error);
+            return;
+        }
+
+        var updated = await response.Content.ReadFromJsonAsync<ChatReactionUpdated>();
+        if (updated is not null)
+        {
+            var index = _messages.FindIndex(x => x.Id == updated.MessageId);
+            if (index >= 0)
+            {
+                _messages[index] = _messages[index] with { Reactions = updated.Reactions };
+            }
+        }
+    }
+
+    private void UpsertMessage(TeamChatMessage message)
+    {
+        var index = _messages.FindIndex(x => x.Id == message.Id);
+        if (index >= 0)
+        {
+            _messages[index] = message;
+        }
+        else
+        {
+            _messages.Add(message);
+        }
+    }
+
+    private async Task NotifyTypingAsync(bool isTyping, bool force = false)
+    {
+        if (_selectedContact is null)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (!force && isTyping && (now - _lastTypingSentAt).TotalSeconds < 2)
+        {
+            return;
+        }
+
+        _lastTypingSentAt = now;
+        try
+        {
+            if (_hubConnection?.State == HubConnectionState.Connected)
+            {
+                await _hubConnection.InvokeAsync("SendTyping", _selectedContact.Id, isTyping);
+                return;
+            }
+
+            await CreateApiClient().PostAsJsonAsync("/api/chat/typing", new
+            {
+                recipientUserId = _selectedContact.Id,
+                isTyping
+            });
+        }
+        catch
+        {
+            // Typing indicators are best-effort.
+        }
+    }
+
+    private async Task MarkConversationReadAsync(Guid contactId)
+    {
+        try
+        {
+            _unreadByContact.Remove(contactId);
+            UpdateContact(contactId, contact => contact with { UnreadCount = 0 });
+            await CreateApiClient().PostAsync($"/api/chat/messages/{contactId}/read", null);
+        }
+        catch
+        {
+            // Read receipts are retried when the conversation is opened again.
+        }
+    }
+
+    private async Task ResetTypingAsync(Guid senderUserId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(2500, cancellationToken);
+            await InvokeAsync(() =>
+            {
+                if (_typingContactId == senderUserId)
+                {
+                    ClearTyping(senderUserId);
+                    StateHasChanged();
+                }
+            });
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private void ClearTyping(Guid senderUserId)
+    {
+        _typingByContact.Remove(senderUserId);
+        if (_typingContactId == senderUserId)
+        {
+            _typingContactId = null;
+            _typingDisplayName = null;
+        }
+    }
+
+    private static string TrimPreview(string text) =>
+        text.Length > 80 ? $"{text[..80]}..." : text;
+
+    private async Task ScrollMessagesAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("poultryFarmUi.scrollToBottom", _messagesContainer);
+        }
+        catch (InvalidOperationException)
+        {
+            // The element may not be rendered yet.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _typingResetCts?.Cancel();
+        _typingResetCts?.Dispose();
+        if (_hubConnection is not null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+
+    private sealed record ChatReadReceipt(Guid ContactId, DateTimeOffset ReadAt);
+    private sealed record TypingSignal(Guid SenderUserId, string SenderDisplayName, bool IsTyping);
+    private sealed record ChatMessageDeleted(Guid MessageId);
+    private sealed record ChatReactionUpdated(Guid MessageId, IReadOnlyCollection<ChatReaction> Reactions);
+
+    public sealed class EmojiOption
+    {
+        public string Emoji { get; set; } = string.Empty;
+        public string Annotation { get; set; } = string.Empty;
+        public string Group { get; set; } = string.Empty;
+        public IReadOnlyList<string> Tags { get; set; } = [];
+    }
+}

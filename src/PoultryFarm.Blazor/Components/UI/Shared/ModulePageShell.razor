@@ -1,0 +1,39 @@
+@using MudBlazor
+
+<MudContainer MaxWidth="MaxWidth.False" Class="dashboard-shell">
+    <div class="page-heading">
+        <div>
+            <MudText Typo="Typo.h4" Class="font-bold">@Title</MudText>
+            @if (!string.IsNullOrWhiteSpace(Subtitle))
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary">@Subtitle</MudText>
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(ActionText))
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@ActionIcon">
+                @ActionText
+            </MudButton>
+        }
+    </div>
+
+    @ChildContent
+</MudContainer>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Subtitle { get; set; }
+
+    [Parameter]
+    public string? ActionText { get; set; }
+
+    [Parameter]
+    public string ActionIcon { get; set; } = Icons.Material.Filled.Add;
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

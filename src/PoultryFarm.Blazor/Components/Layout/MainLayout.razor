@@ -1,0 +1,763 @@
+@inherits LayoutComponentBase
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using MudBlazor
+@using Microsoft.AspNetCore.SignalR.Client
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Navigation
+@implements IAsyncDisposable
+
+@inject AuthSession AuthSession
+@inject NavigationManager Navigation
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudThemeProvider Theme="_theme" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="0" Dense="true" Class="app-bar">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu"
+                       Color="Color.Inherit"
+                       Edge="Edge.Start"
+                       OnClick="@ToggleDrawer" />
+
+        <MudText Typo="Typo.h6" Class="font-semibold">
+            @AuthSession.WorkspaceTitle
+        </MudText>
+
+        <MudSpacer />
+
+        <MudText Typo="Typo.body2" Class="topbar-welcome">
+            Welcome, @AuthSession.FirstNameOrUsername
+        </MudText>
+
+        <div class="topbar-notification-anchor">
+            <button type="button" class="topbar-icon-button" @onclick="ToggleNotifications">
+                <MudBadge Content="@_notificationCount"
+                          Visible="@(_notificationCount > 0)"
+                          Color="Color.Error"
+                          Overlap="false"
+                          Class="topbar-badge">
+                    <MudIcon Icon="@Icons.Material.Filled.Notifications" Class="notification-button" />
+                </MudBadge>
+            </button>
+
+            <MudPopover Open="@_notificationsOpen"
+                        AnchorOrigin="Origin.BottomRight"
+                        TransformOrigin="Origin.TopRight"
+                        Class="notification-popover"
+                        Elevation="8">
+                <div class="notification-panel">
+                    <div class="notification-panel-header">
+                        <div>
+                            <MudText Typo="Typo.subtitle2" Class="font-semibold">@(_selectedNotification is null ? "Notifications" : "Notification Detail")</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@(_selectedNotification is null ? "Chat and farm operation alerts" : _selectedNotification.At.LocalDateTime.ToString("MMM d, yyyy h:mm tt"))</MudText>
+                        </div>
+                        @if (_selectedNotification is not null)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" OnClick="BackToNotifications" />
+                        }
+                        else if (_notifications.Count > 0)
+                        {
+                            <MudButton Variant="Variant.Text" Color="Color.Error" Size="Size.Small" OnClick="ClearNotificationsAsync">Clear</MudButton>
+                        }
+                    </div>
+
+                    @if (_selectedNotification is not null)
+                    {
+                        <div class="notification-detail">
+                            <MudIcon Icon="@NotificationIcon(_selectedNotification.Kind)" Color="@NotificationColor(_selectedNotification.Kind)" />
+                            <MudText Typo="Typo.subtitle1" Class="font-semibold">@_selectedNotification.Title</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@_selectedNotification.Actor</MudText>
+                            <MudText Typo="Typo.body2">@_selectedNotification.Detail</MudText>
+                        </div>
+                    }
+                    else if (_notifications.Count == 0)
+                    {
+                        <div class="notification-empty">
+                            <MudIcon Icon="@Icons.Material.Filled.NotificationsNone" Color="Color.Secondary" />
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">No notifications yet.</MudText>
+                        </div>
+                    }
+                    else
+                    {
+                        @foreach (var notification in _notifications)
+                        {
+                            <div class="@NotificationItemClass(notification)" @onclick="@(() => OpenNotificationAsync(notification))">
+                                <MudIcon Icon="@NotificationIcon(notification.Kind)" Color="@NotificationColor(notification.Kind)" />
+                                <div class="notification-copy">
+                                    <MudText Typo="Typo.body2" Class="font-semibold">@notification.Title</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@notification.Actor</MudText>
+                                    <MudText Typo="Typo.body2">@TrimNotification(notification.Detail)</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@notification.At.LocalDateTime.ToString("MMM d, h:mm tt")</MudText>
+                                </div>
+                                <span @onclick:stopPropagation="true">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                                   Size="Size.Small"
+                                                   Color="Color.Error"
+                                                   OnClick="@(() => DeleteNotificationAsync(notification.Id))" />
+                                </span>
+                            </div>
+                        }
+                    }
+                </div>
+            </MudPopover>
+        </div>
+
+        <MudChip T="string"
+                 Color="Color.Success"
+                 Variant="Variant.Outlined"
+                 Size="Size.Small">
+            @DisplayRole
+        </MudChip>
+
+        <MudIconButton Icon="@Icons.Material.Filled.Logout"
+                       Color="Color.Inherit"
+                       OnClick="@LogoutAsync" />
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen"
+               Elevation="0"
+               Variant="DrawerVariant.Responsive"
+               Class="app-drawer">
+
+
+
+        @if (AuthSession.IsAuthenticated)
+        {
+            <div class="sidebar-profile">
+                <MudAvatar Size="Size.Large" Color="Color.Primary" Class="sidebar-avatar">
+                    @Initials
+                </MudAvatar>
+                <MudText Typo="Typo.subtitle2" Class="font-semibold">
+                    @AuthSession.DisplayName
+                </MudText>
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                    @DisplayRole
+                </MudChip>
+            </div>
+        }
+
+        @if (AuthSession.IsAuthenticated)
+        {
+            <div class="sidebar-scroll">
+                <MudNavMenu Dense="true">
+                    @foreach (var group in AppNavigation.Groups)
+                    {
+                        <AuthorizedNavGroup Group="@group" />
+                    }
+                </MudNavMenu>
+            </div>
+        }
+        else
+        {
+            <MudStack AlignItems="AlignItems.Center"
+                      Justify="Justify.Center"
+                      Class="pa-4">
+                <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                <MudText Typo="Typo.caption">Loading navigation...</MudText>
+            </MudStack>
+        }
+
+        <div class="drawer-footer">
+            <MudText Typo="Typo.caption">@AuthSession.WorkspaceTitle</MudText>
+            <MudText Typo="Typo.caption" Color="Color.Secondary">Secure operations console</MudText>
+        </div>
+    </MudDrawer>
+
+    <MudMainContent Class="main-content">
+        <PoultryFarm.Blazor.Components.UI.Shared.IdleLogout TimeoutMilliseconds="180000" />
+        @Body
+        @if (AuthSession.IsAuthenticated)
+        {
+            <div class="@ChatFabClass">
+                <MudBadge Content="@_chatUnreadCount" Visible="@(_chatUnreadCount > 0)" Color="Color.Error" Overlap="false" Class="chat-fab-badge">
+                    <MudIconButton Icon="@Icons.Material.Filled.Chat"
+                                   Color="Color.Primary"
+                                   Size="Size.Large"
+                                   Class="chat-fab-button"
+                                   OnClick="@OpenTeamChat" />
+                </MudBadge>
+            </div>
+
+            @if (_chatOpen)
+            {
+                <div class="chat-side-backdrop" @onclick="CloseTeamChat"></div>
+                <MudPaper Elevation="8" Class="chat-side-dialog">
+                    <div class="chat-side-header">
+                        <div>
+                            <MudText Typo="Typo.h6" Class="font-semibold">Team Chat</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@ChatScopeText</MudText>
+                        </div>
+                        <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                       Size="Size.Small"
+                                       Color="Color.Default"
+                                       OnClick="@CloseTeamChat" />
+                    </div>
+
+                    <PoultryFarm.Blazor.Components.UI.Chat.TeamChatWorkspace Compact="true"
+                                                                               InitialContactId="_chatContactToOpen"
+                                                                               MessageReceived="OnChatWorkspaceMessage"
+                                                                               ActiveContactChanged="OnActiveChatContactChanged" />
+                </MudPaper>
+            }
+        }
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">x</span>
+</div>
+
+@code {
+    private bool _drawerOpen = true;
+    private bool _hasTriedLoadingSession;
+    private bool _chatOpen;
+    private bool _notificationsOpen;
+    private int _chatUnreadCount;
+    private int _notificationCount;
+    private Guid? _chatContactToOpen;
+    private Guid? _activeChatContactId;
+    private HubConnection? _hubConnection;
+    private readonly List<AppNotification> _notifications = [];
+    private AppNotification? _selectedNotification;
+    private string Initials =>
+        string.Join("", new[] { AuthSession.FirstName, AuthSession.LastName }
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x![0]))
+        is { Length: > 0 } initials
+            ? initials.ToUpperInvariant() 
+            : (AuthSession.Username?.Length > 0 ? AuthSession.Username[..1].ToUpperInvariant() : "U");
+
+    private string DisplayRole =>
+        AuthSession.Role switch
+        {
+            "super_admin" => "Super Admin",
+            "sub_admin" => "Sub Admin",
+            "system_admin" => "System Admin",
+            "farm_admin" => "Farm Admin",
+            "worker" => "Worker",
+            _ => string.IsNullOrWhiteSpace(AuthSession.Role) ? "No Role" : AuthSession.Role 
+        };
+
+    private string SidebarSubtitle =>
+        AuthSession.IsSystemAdmin || string.IsNullOrWhiteSpace(AuthSession.CompanyName)
+            ? "System operations"
+            : AuthSession.CompanyName;
+
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = "#2563eb",
+            Secondary = "#059669",
+            AppbarBackground = "#111827",
+            Background = "#f8fafc",
+            Surface = "#ffffff",
+            DrawerBackground = "#ffffff"
+        },
+        LayoutProperties = new LayoutProperties
+        {
+            DefaultBorderRadius = "6px"
+        }
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _hasTriedLoadingSession)
+        {
+            return;
+        }
+
+        _hasTriedLoadingSession = true;
+
+        await AuthSession.LoadAsync();
+        Navigation.LocationChanged += HandleLocationChanged;
+        await LoadNotificationsAsync();
+        await LoadUnreadChatSummaryAsync();
+        await ConnectHubAsync();
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ToggleDrawer()
+    {
+        _drawerOpen = !_drawerOpen;
+    }
+
+    private async Task LogoutAsync()
+    {
+        await AuthSession.SignOutAsync();
+        Navigation.NavigateTo("/", replace: true);
+    }
+
+    private string ChatScopeText =>
+        AuthSession.Role switch
+        {
+            "worker" => "Chat with workers and farm admins in your company.",
+            "farm_admin" => "Chat with your workers and system admins for escalation.",
+            "super_admin" or "sub_admin" or "system_admin" => "Chat with farm admins across companies.",
+            _ => "Role-scoped team messaging."
+        };
+
+    private string ChatFabClass =>
+        IsFarmAssistancePage ? "team-chat-fab-menu assistance-page" : "team-chat-fab-menu";
+
+    private bool IsFarmAssistancePage =>
+        new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/').Equals("/farm-assistance", StringComparison.OrdinalIgnoreCase);
+
+    private void HandleLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OpenTeamChat()
+    {
+        _chatContactToOpen = null;
+        _chatOpen = true;
+    }
+
+    private async Task OpenNotificationAsync(AppNotification notification)
+    {
+        if (notification.ReadAt is null)
+        {
+            notification.ReadAt = DateTimeOffset.UtcNow;
+            _notificationCount = NotificationUnreadCount();
+            await MarkNotificationReadAsync(notification);
+        }
+
+        if (notification.Kind == NotificationKind.Chat)
+        {
+            _chatContactToOpen = notification.TargetId;
+            _chatOpen = true;
+            if (notification.TargetId.HasValue)
+            {
+                await MarkChatNotificationsReadAsync(notification.TargetId.Value);
+            }
+            _notificationsOpen = false;
+            return;
+        }
+
+        _selectedNotification = notification;
+    }
+
+    private void CloseTeamChat()
+    {
+        _chatOpen = false;
+        _activeChatContactId = null;
+    }
+
+    private void OpenFarmAssistance()
+    {
+        Navigation.NavigateTo("/farm-assistance");
+    }
+
+    private void ToggleNotifications()
+    {
+        _notificationsOpen = !_notificationsOpen;
+        if (!_notificationsOpen)
+        {
+            _selectedNotification = null;
+        }
+    }
+
+    private Task OnChatWorkspaceMessage(TeamChatMessage message)
+    {
+        if (message.SenderUserId == AuthSession.UserId)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (_activeChatContactId == message.SenderUserId)
+        {
+            _chatUnreadCount = Math.Max(0, _chatUnreadCount - 1);
+            _ = MarkChatNotificationsReadAsync(message.SenderUserId);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task OnActiveChatContactChanged(Guid? contactId)
+    {
+        _activeChatContactId = contactId;
+        if (contactId.HasValue)
+        {
+            await MarkChatNotificationsReadAsync(contactId.Value);
+        }
+    }
+
+    private async Task ConnectHubAsync()
+    {
+        if (_hubConnection is not null || string.IsNullOrWhiteSpace(AuthSession.Token))
+        {
+            return;
+        }
+
+        var apiClient = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        var hubUrl = new Uri(apiClient.BaseAddress!, "/hubs/activity");
+
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(hubUrl, options =>
+            {
+                options.AccessTokenProvider = () => Task.FromResult<string?>(AuthSession.Token);
+            })
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<TeamChatMessage>("chat.message", message =>
+        {
+            return InvokeAsync(() =>
+            {
+                if (message.SenderUserId == AuthSession.UserId)
+                {
+                    return;
+                }
+
+                if (!_chatOpen || _activeChatContactId != message.SenderUserId)
+                {
+                    _chatUnreadCount++;
+                }
+
+                if (!_chatOpen || _activeChatContactId != message.SenderUserId)
+                {
+                    Snackbar.Add("New chat message received.", Severity.Info, options =>
+                    {
+                        options.VisibleStateDuration = 2000;
+                    });
+                }
+                StateHasChanged();
+            });
+        });
+
+        _hubConnection.On<ActivityNotification>("activity.received", notification =>
+        {
+            return InvokeAsync(() =>
+            {
+                var appNotification = new AppNotification(
+                    notification.Id,
+                    notification.Title,
+                    notification.ActorName ?? "System",
+                    notification.Detail,
+                    notification.At,
+                    ParseNotificationKind(notification.Kind),
+                    notification.TargetType,
+                    notification.TargetId,
+                    null,
+                    1,
+                    [notification.Id]);
+
+                if (appNotification.Kind == NotificationKind.Chat &&
+                    _chatOpen &&
+                    _activeChatContactId.HasValue &&
+                    appNotification.TargetId == _activeChatContactId.Value)
+                {
+                    _ = MarkNotificationIdReadAsync(appNotification.Id);
+                    return;
+                }
+
+                UpsertNotification(appNotification);
+                _notificationCount = NotificationUnreadCount();
+
+                if (appNotification.Kind != NotificationKind.Chat)
+                {
+                    Snackbar.Add(notification.Title, Severity.Info, options =>
+                    {
+                        options.VisibleStateDuration = 2000;
+                    });
+                }
+                StateHasChanged();
+            });
+        });
+
+        try
+        {
+            await _hubConnection.StartAsync();
+            if (AuthSession.CompanyId.HasValue)
+            {
+                await _hubConnection.InvokeAsync("JoinCompany", AuthSession.CompanyId.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private async Task LoadUnreadChatSummaryAsync()
+    {
+        if (!AuthSession.IsAuthenticated || string.IsNullOrWhiteSpace(AuthSession.Token))
+        {
+            return;
+        }
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+            var contacts = await client.GetFromJsonAsync<List<ChatContact>>("/api/chat/contacts") ?? [];
+            var unreadContacts = contacts
+                .Where(x => x.UnreadCount > 0)
+                .OrderByDescending(x => x.LastMessageAt ?? DateTimeOffset.MinValue)
+                .ToList();
+
+            _chatUnreadCount = unreadContacts.Sum(x => x.UnreadCount);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private async Task LoadNotificationsAsync()
+    {
+        if (!AuthSession.IsAuthenticated || string.IsNullOrWhiteSpace(AuthSession.Token))
+        {
+            return;
+        }
+
+        try
+        {
+            var notifications = await CreateApiClient().GetFromJsonAsync<List<AppNotificationDto>>("/api/notifications") ?? [];
+            _notifications.Clear();
+            foreach (var notification in notifications.Select(x => new AppNotification(
+                x.Id,
+                x.Title,
+                x.ActorName,
+                x.Detail,
+                x.SentAt,
+                ParseNotificationKind(x.Kind),
+                x.TargetType,
+                x.TargetId,
+                x.ReadAt,
+                1,
+                [x.Id])))
+            {
+                UpsertNotification(notification, sort: false);
+            }
+
+            _notifications.Sort((left, right) => right.At.CompareTo(left.At));
+            _notificationCount = NotificationUnreadCount();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private async Task MarkNotificationReadAsync(AppNotification notification)
+    {
+        try
+        {
+            foreach (var id in notification.NotificationIds)
+            {
+                await CreateApiClient().PostAsync($"/api/notifications/{id}/read", null);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private async Task MarkNotificationIdReadAsync(Guid notificationId)
+    {
+        try
+        {
+            await CreateApiClient().PostAsync($"/api/notifications/{notificationId}/read", null);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private async Task MarkChatNotificationsReadAsync(Guid contactId)
+    {
+        try
+        {
+            await CreateApiClient().PostAsync($"/api/notifications/chat/{contactId}/read", null);
+            foreach (var notification in _notifications.Where(x => x.Kind == NotificationKind.Chat && x.TargetId == contactId && x.ReadAt is null))
+            {
+                notification.ReadAt = DateTimeOffset.UtcNow;
+            }
+
+            _notificationCount = NotificationUnreadCount();
+            await LoadUnreadChatSummaryAsync();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private async Task DeleteNotificationAsync(Guid id)
+    {
+        try
+        {
+            var notification = _notifications.FirstOrDefault(x => x.Id == id || x.NotificationIds.Contains(id));
+            var ids = notification?.NotificationIds.Count > 0 ? notification.NotificationIds.ToList() : [id];
+            var success = true;
+            foreach (var notificationId in ids)
+            {
+                var response = await CreateApiClient().DeleteAsync($"/api/notifications/{notificationId}");
+                success &= response.IsSuccessStatusCode;
+            }
+
+            if (success)
+            {
+                _notifications.RemoveAll(x => x.Id == id || x.NotificationIds.Contains(id));
+                if (_selectedNotification?.Id == id)
+                {
+                    _selectedNotification = null;
+                }
+                _notificationCount = NotificationUnreadCount();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private async Task ClearNotificationsAsync()
+    {
+        try
+        {
+            var response = await CreateApiClient().DeleteAsync("/api/notifications");
+            if (response.IsSuccessStatusCode)
+            {
+                _notifications.Clear();
+                _notificationCount = 0;
+                _selectedNotification = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private void BackToNotifications()
+    {
+        _selectedNotification = null;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Navigation.LocationChanged -= HandleLocationChanged;
+
+        if (_hubConnection is not null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+
+    private static string NotificationIcon(NotificationKind kind) =>
+        kind == NotificationKind.Chat ? Icons.Material.Filled.MarkChatUnread : Icons.Material.Filled.NotificationsActive;
+
+    private static Color NotificationColor(NotificationKind kind) =>
+        kind == NotificationKind.Chat ? Color.Primary : Color.Success;
+
+    private static NotificationKind ParseNotificationKind(string? kind) =>
+        string.Equals(kind, "chat", StringComparison.OrdinalIgnoreCase)
+            ? NotificationKind.Chat
+            : NotificationKind.Activity;
+
+    private static string TrimNotification(string detail) =>
+        detail.Length > 96 ? $"{detail[..96]}..." : detail;
+
+    private static string NotificationItemClass(AppNotification notification) =>
+        $"notification-item{(notification.ReadAt is null ? " unread" : string.Empty)}";
+
+    private int NotificationUnreadCount() =>
+        _notifications.Where(x => x.ReadAt is null).Sum(x => Math.Max(1, x.Count));
+
+    private void UpsertNotification(AppNotification notification, bool sort = true)
+    {
+        if (notification.Kind == NotificationKind.Chat && notification.ReadAt is null)
+        {
+            var existing = _notifications.FirstOrDefault(x =>
+                x.Kind == NotificationKind.Chat &&
+                x.ReadAt is null &&
+                x.TargetId == notification.TargetId);
+
+            if (existing is not null)
+            {
+                existing.Count += notification.Count;
+                existing.Title = existing.Count == 1 ? "New chat message" : $"{existing.Count:N0} new chat messages";
+                existing.Detail = notification.Detail;
+                existing.At = notification.At;
+                existing.NotificationIds.AddRange(notification.NotificationIds.Where(id => !existing.NotificationIds.Contains(id)));
+
+                if (sort)
+                {
+                    _notifications.Remove(existing);
+                    _notifications.Insert(0, existing);
+                }
+
+                return;
+            }
+        }
+
+        notification.Title = notification.Kind == NotificationKind.Chat && notification.Count > 1
+            ? $"{notification.Count:N0} new chat messages"
+            : notification.Title;
+        _notifications.Insert(0, notification);
+    }
+
+    private static string DisplayName(ChatContact contact)
+    {
+        var name = $"{contact.FirstName} {contact.LastName}".Trim();
+        return string.IsNullOrWhiteSpace(name) ? contact.Username : name;
+    }
+
+    private enum NotificationKind
+    {
+        Chat,
+        Activity
+    }
+
+    private sealed record ActivityNotification(Guid Id, string Title, string Detail, DateTimeOffset At, string? ActorName, string? Kind, string? TargetType, Guid? TargetId);
+
+    private sealed record AppNotificationDto(Guid Id, string Title, string ActorName, string Detail, string Kind, string? TargetType, Guid? TargetId, DateTimeOffset SentAt, DateTimeOffset? ReadAt);
+
+    private sealed class AppNotification(
+        Guid id,
+        string title,
+        string actor,
+        string detail,
+        DateTimeOffset at,
+        NotificationKind kind,
+        string? targetType,
+        Guid? targetId,
+        DateTimeOffset? readAt,
+        int count,
+        List<Guid> notificationIds)
+    {
+        public Guid Id { get; } = id;
+        public string Title { get; set; } = title;
+        public string Actor { get; } = actor;
+        public string Detail { get; set; } = detail;
+        public DateTimeOffset At { get; set; } = at;
+        public NotificationKind Kind { get; } = kind;
+        public string? TargetType { get; } = targetType;
+        public Guid? TargetId { get; } = targetId;
+        public DateTimeOffset? ReadAt { get; set; } = readAt;
+        public int Count { get; set; } = count;
+        public List<Guid> NotificationIds { get; } = notificationIds;
+    }
+}

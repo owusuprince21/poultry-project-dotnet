@@ -1,0 +1,442 @@
+@page "/production"
+@using System.Net.Http.Headers
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Egg Production</PageTitle>
+
+<ModulePageShell Title="Egg Production" Subtitle="Record and monitor daily egg collection by batch, bird color, and egg size.">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="4">
+            <DashboardMetricCard Label="Total Eggs In Crates" Value="@($"{_metrics.TotalCrates:N2}")" Detail="@($"{_metrics.TotalEggs:N0} eggs, 30 eggs per crate")" Icon="@Icons.Material.Filled.Egg" Color="Color.Success" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <DashboardMetricCard Label="@SelectedSizeLabel" Value="@($"{_metrics.SelectedSizeEggs:N0}")" Detail="eggs in selected size" Icon="@Icons.Material.Filled.Category" Color="Color.Primary" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <DashboardMetricCard Label="Production Entries" Value="@($"{_metrics.Entries:N0}")" Detail="records in current filter" Icon="@Icons.Material.Filled.AssignmentTurnedIn" Color="Color.Info" />
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Elevation="0" Class="work-surface pa-4 mt-4">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="4">
+                <MudSelect T="Guid?" Label="Metric batch" Value="_metricBatchId" ValueChanged="OnMetricBatchChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true">
+                    @foreach (var batch in _batches)
+                    {
+                        <MudSelectItem T="Guid?" Value="@batch.Id">@batch.BatchNumber - @batch.Breed</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudSelect T="int?" Label="Egg size" Value="_metricSize" ValueChanged="OnMetricSizeChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true">
+                    <MudSelectItem T="int?" Value="0">Small</MudSelectItem>
+                    <MudSelectItem T="int?" Value="1">Medium</MudSelectItem>
+                    <MudSelectItem T="int?" Value="2">Large</MudSelectItem>
+                    <MudSelectItem T="int?" Value="3">Jumbo</MudSelectItem>
+                    <MudSelectItem T="int?" Value="4">Unsorted</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudSelect T="int?" Label="Bird color" Value="_metricColor" ValueChanged="OnMetricColorChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true">
+                    @foreach (var color in ColorOptions)
+                    {
+                        <MudSelectItem T="int?" Value="@color.Value">@color.Label</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="3" Class="mt-1">
+        <MudItem xs="12" lg="5">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <div>
+                        <MudText Typo="Typo.h6" Class="font-semibold">@(_editingId.HasValue ? "Update Production Entry" : "Egg Production Entry")</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Sorted and unsorted collection capture.</MudText>
+                    </div>
+                    @if (_editingId.HasValue)
+                    {
+                        <MudButton Variant="Variant.Text" Color="Color.Secondary" OnClick="ResetForm">Cancel</MudButton>
+                    }
+                </MudStack>
+
+                <MudForm @ref="_form">
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12">
+                            <MudSelect T="Guid?" Label="Batch" Value="_selectedBatchId" ValueChanged="OnBatchChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true">
+                                @foreach (var batch in _batches)
+                                {
+                                    <MudSelectItem T="Guid?" Value="@batch.Id">@batch.BatchNumber - @batch.Breed</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudSelect T="Guid?" Label="Bird Color" @bind-Value="_model.BatchVariantId" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true">
+                                @foreach (var variant in SelectedBatchVariants)
+                                {
+                                    <MudSelectItem T="Guid?" Value="@variant.Id">@DisplayColor(variant.Color)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudDatePicker Label="Production Date" @bind-Date="_productionDate" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" />
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudSelect T="int" Label="Collection Type" @bind-Value="_model.CollectionType" Variant="Variant.Outlined" Margin="Margin.Dense">
+                                <MudSelectItem T="int" Value="0">Sorted</MudSelectItem>
+                                <MudSelectItem T="int" Value="1">Unsorted</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+
+                        @if (_model.CollectionType == 0)
+                        {
+                            @foreach (var row in SortedRows)
+                            {
+                                <MudItem xs="12" md="6">
+                                    <MudNumericField T="int" Label="@($"{row.Label} Crates")" @bind-Value="row.Crates" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" />
+                                </MudItem>
+                                <MudItem xs="12" md="6">
+                                    <MudNumericField T="int" Label="@($"{row.Label} Pieces")" @bind-Value="row.Pieces" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" Max="29" />
+                                </MudItem>
+                            }
+                        }
+                        else
+                        {
+                            <MudItem xs="12" md="6">
+                                <MudNumericField T="int" Label="Total Crates" @bind-Value="_model.UnsortedCrates" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudNumericField T="int" Label="Total Pieces" @bind-Value="_model.UnsortedPieces" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" Max="29" />
+                            </MudItem>
+                        }
+
+                        <MudItem xs="12">
+                            <MudTextField T="string" Label="Egg observation" @bind-Value="_model.Notes" Lines="3" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" Class="mt-3" Disabled="@_saving" OnClick="SaveAsync">
+                        @(_editingId.HasValue ? "Update Entry" : "Save Entry")
+                    </MudButton>
+                </MudForm>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="7">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <div>
+                        <MudText Typo="Typo.h6" Class="font-semibold">Production Records</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">10 rows per page, newest first.</MudText>
+                    </div>
+                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" />
+                </MudStack>
+
+                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading">
+                    <HeaderContent>
+                        <MudTh>Date</MudTh>
+                        <MudTh>Batch</MudTh>
+                        <MudTh>Color</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Total Eggs</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
+                        <MudTd>@context.BatchNumber</MudTd>
+                        <MudTd>@DisplayColor(context.BirdColor)</MudTd>
+                        <MudTd>@(context.CollectionType == 0 ? "Sorted" : "Unsorted")</MudTd>
+                        <MudTd>@context.TotalEggs.ToString("N0")</MudTd>
+                        <MudTd>
+                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => Edit(context))">Update</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteAsync(context.Id))">Delete</MudMenuItem>
+                            </MudMenu>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <EmptyState Icon="@Icons.Material.Filled.EggAlt" Title="No production entries yet" Description="Create the first egg production entry for the active batch." />
+                    </NoRecordsContent>
+                </MudTable>
+
+                <MudPagination Count="@TotalPages" Selected="_page" SelectedChanged="ChangePageAsync" Class="mt-3" />
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</ModulePageShell>
+
+@code {
+    private MudForm? _form;
+    private readonly EggProductionForm _model = new();
+    private DateTime? _productionDate = DateTime.Today;
+    private Guid? _selectedBatchId;
+    private Guid? _editingId;
+    private Guid? _metricBatchId;
+    private int? _metricSize;
+    private int? _metricColor;
+    private int _page = 1;
+    private const int PageSize = 10;
+    private int _total;
+    private bool _loading;
+    private bool _saving;
+    private EggMetrics _metrics = new();
+    private List<BatchOption> _batches = [];
+    private List<EggProductionRow> _records = [];
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+    private string SelectedSizeLabel => _metricSize switch
+    {
+        0 => "Small Eggs",
+        1 => "Medium Eggs",
+        2 => "Large Eggs",
+        3 => "Jumbo Eggs",
+        4 => "Unsorted Eggs",
+        _ => "All Egg Sizes"
+    };
+
+    private IEnumerable<BatchVariantOption> SelectedBatchVariants =>
+        _batches.FirstOrDefault(x => x.Id == _selectedBatchId)?.Variants ?? [];
+
+    private IEnumerable<EggInputRow> SortedRows =>
+    [
+        new("Small Eggs", () => _model.SmallCrates, value => _model.SmallCrates = value, () => _model.SmallPieces, value => _model.SmallPieces = value),
+        new("Medium Eggs", () => _model.MediumCrates, value => _model.MediumCrates = value, () => _model.MediumPieces, value => _model.MediumPieces = value),
+        new("Large Eggs", () => _model.LargeCrates, value => _model.LargeCrates = value, () => _model.LargePieces, value => _model.LargePieces = value),
+        new("Jumbo Eggs", () => _model.JumboCrates, value => _model.JumboCrates = value, () => _model.JumboPieces, value => _model.JumboPieces = value)
+    ];
+
+    private static readonly (int Value, string Label)[] ColorOptions =
+    [
+        (0, "White"),
+        (1, "Brown"),
+        (2, "Black"),
+        (3, "Speckled"),
+        (4, "Mixed")
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var client = CreateApiClient();
+            _batches = (await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [])
+                .Where(x => x.BirdType == 0)
+                .ToList();
+            await LoadMetricsAsync();
+            var response = await client.GetFromJsonAsync<PagedEggResponse>($"/api/egg-production?page={_page}&pageSize={PageSize}");
+            _records = response?.Items ?? [];
+            _total = response?.Total ?? 0;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Egg production error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadMetricsAsync()
+    {
+        var query = new List<string>();
+        if (_metricBatchId.HasValue)
+        {
+            query.Add($"batchId={_metricBatchId}");
+        }
+        if (_metricSize.HasValue)
+        {
+            query.Add($"size={_metricSize}");
+        }
+        if (_metricColor.HasValue)
+        {
+            query.Add($"color={_metricColor}");
+        }
+
+        _metrics = await CreateApiClient().GetFromJsonAsync<EggMetrics>($"/api/egg-production/metrics{(query.Count > 0 ? $"?{string.Join("&", query)}" : string.Empty)}") ?? new();
+    }
+
+    private async Task OnMetricBatchChanged(Guid? value)
+    {
+        _metricBatchId = value;
+        await LoadMetricsAsync();
+    }
+
+    private async Task OnMetricSizeChanged(int? value)
+    {
+        _metricSize = value;
+        await LoadMetricsAsync();
+    }
+
+    private async Task OnMetricColorChanged(int? value)
+    {
+        _metricColor = value;
+        await LoadMetricsAsync();
+    }
+
+    private Task OnBatchChanged(Guid? batchId)
+    {
+        _selectedBatchId = batchId;
+        _model.BatchVariantId = SelectedBatchVariants.FirstOrDefault()?.Id;
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_model.BatchVariantId is null || _productionDate is null)
+        {
+            Snackbar.Add("Select batch, bird color, and production date.", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var payload = _model with
+            {
+                BatchVariantId = _model.BatchVariantId,
+                Date = DateOnly.FromDateTime(_productionDate.Value)
+            };
+
+            var client = CreateApiClient();
+            var response = _editingId.HasValue
+                ? await client.PutAsJsonAsync($"/api/egg-production/{_editingId}", payload)
+                : await client.PostAsJsonAsync("/api/egg-production", payload);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Egg production could not be saved."), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(_editingId.HasValue ? "Egg production updated." : "Egg production saved.", Severity.Success);
+            ResetForm();
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Edit(EggProductionRow row)
+    {
+        _editingId = row.Id;
+        _selectedBatchId = row.BatchId;
+        _productionDate = row.Date.ToDateTime(TimeOnly.MinValue);
+        _model.BatchVariantId = row.BatchVariantId;
+        _model.CollectionType = row.CollectionType;
+        _model.SmallCrates = row.SmallCrates;
+        _model.SmallPieces = row.SmallPieces;
+        _model.MediumCrates = row.MediumCrates;
+        _model.MediumPieces = row.MediumPieces;
+        _model.LargeCrates = row.LargeCrates;
+        _model.LargePieces = row.LargePieces;
+        _model.JumboCrates = row.JumboCrates;
+        _model.JumboPieces = row.JumboPieces;
+        _model.UnsortedCrates = row.UnsortedCrates;
+        _model.UnsortedPieces = row.UnsortedPieces;
+        _model.Notes = row.Notes;
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        var response = await CreateApiClient().DeleteAsync($"/api/egg-production/{id}");
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Egg production could not be deleted."), Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Egg production deleted.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task ChangePageAsync(int page)
+    {
+        _page = page;
+        await LoadAsync();
+    }
+
+    private void ResetForm()
+    {
+        _editingId = null;
+        _selectedBatchId = null;
+        _productionDate = DateTime.Today;
+        _model.Reset();
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static string DisplayColor(int color) =>
+        color switch
+        {
+            0 => "White",
+            1 => "Brown",
+            2 => "Black",
+            3 => "Speckled",
+            4 => "Mixed",
+            _ => "Mixed"
+        };
+
+    private sealed record PagedEggResponse(List<EggProductionRow> Items, int Total, int Page, int PageSize);
+    private sealed record EggMetrics(int TotalEggs = 0, decimal TotalCrates = 0, int SelectedSizeEggs = 0, int Entries = 0, int SmallEggs = 0, int MediumEggs = 0, int LargeEggs = 0, int JumboEggs = 0, int UnsortedEggs = 0);
+    private sealed record BatchOption(Guid Id, string BatchNumber, int BirdType, DateOnly ArrivalDate, string Breed, string? Supplier, DateOnly ExpectedSaleDate, int Status, int InitialCount, int CurrentCount, decimal SurvivalRate, List<BatchVariantOption> Variants);
+    private sealed record BatchVariantOption(Guid Id, int Color, int EggColor, int InitialCount, int CurrentCount, string? Notes);
+    private sealed record EggProductionRow(Guid Id, Guid CompanyId, Guid BatchId, string BatchNumber, Guid BatchVariantId, int BirdColor, int EggColor, DateOnly Date, int CollectionType, int SmallCrates, int SmallPieces, int MediumCrates, int MediumPieces, int LargeCrates, int LargePieces, int JumboCrates, int JumboPieces, int UnsortedCrates, int UnsortedPieces, int SmallEggs, int MediumEggs, int LargeEggs, int JumboEggs, int UnsortedEggs, int TotalEggs, string? Notes);
+
+    private sealed record EggInputRow(string Label, Func<int> GetCrates, Action<int> SetCrates, Func<int> GetPieces, Action<int> SetPieces)
+    {
+        public int Crates { get => GetCrates(); set => SetCrates(value); }
+        public int Pieces { get => GetPieces(); set => SetPieces(value); }
+    }
+
+    private sealed record EggProductionForm
+    {
+        public Guid? BatchVariantId { get; set; }
+        public DateOnly Date { get; init; } = DateOnly.FromDateTime(DateTime.Today);
+        public int CollectionType { get; set; }
+        public int SmallCrates { get; set; }
+        public int SmallPieces { get; set; }
+        public int MediumCrates { get; set; }
+        public int MediumPieces { get; set; }
+        public int LargeCrates { get; set; }
+        public int LargePieces { get; set; }
+        public int JumboCrates { get; set; }
+        public int JumboPieces { get; set; }
+        public int UnsortedCrates { get; set; }
+        public int UnsortedPieces { get; set; }
+        public string? Notes { get; set; }
+
+        public void Reset()
+        {
+            BatchVariantId = null;
+            CollectionType = 0;
+            SmallCrates = SmallPieces = MediumCrates = MediumPieces = LargeCrates = LargePieces = JumboCrates = JumboPieces = UnsortedCrates = UnsortedPieces = 0;
+            Notes = null;
+        }
+    }
+}

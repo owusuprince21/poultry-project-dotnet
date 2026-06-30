@@ -1,0 +1,216 @@
+@page "/debeaking"
+@using System.Net.Http.Headers
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Debeaking</PageTitle>
+
+<ModulePageShell Title="Debeaking" Subtitle="Schedule and complete debeaking activities by batch, bird color, and bird age.">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="4">
+            <DashboardMetricCard Label="Scheduled" Value="@_metrics.Scheduled.ToString("N0")" Detail="open debeaking tasks" Icon="@Icons.Material.Filled.Event" Color="Color.Primary" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <DashboardMetricCard Label="Completed" Value="@_metrics.Completed.ToString("N0")" Detail="completed activities" Icon="@Icons.Material.Filled.TaskAlt" Color="Color.Success" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <DashboardMetricCard Label="Overdue" Value="@_metrics.Overdue.ToString("N0")" Detail="past scheduled date" Icon="@Icons.Material.Filled.Warning" Color="Color.Error" />
+        </MudItem>
+    </MudGrid>
+
+    <MudGrid Spacing="3" Class="mt-4">
+        <MudItem xs="12" lg="4">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudText Typo="Typo.h6" Class="font-semibold">Schedule Debeaking</MudText>
+                <MudStack Spacing="3" Class="mt-3">
+                    <MudSelect T="Guid?" Label="Batch" Value="_selectedBatchId" ValueChanged="OnBatchChanged" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var batch in _batches)
+                        {
+                            <MudSelectItem T="Guid?" Value="@batch.Id">@batch.BatchNumber - @batch.Breed</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="Guid?" Label="Bird color" @bind-Value="_form.BatchVariantId" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var variant in SelectedVariants)
+                        {
+                            <MudSelectItem T="Guid?" Value="@variant.Id">@DisplayColor(variant.Color)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudTextField @bind-Value="_form.DebeakingType" Label="Debeaking type" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudDatePicker @bind-Date="_scheduledDate" Label="Scheduled date" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudNumericField T="int" @bind-Value="_form.BirdAgeWeeks" Label="Bird age in weeks" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" />
+                    <MudTextField @bind-Value="_form.Notes" Label="Notes" Variant="Variant.Outlined" Lines="3" Margin="Margin.Dense" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" Disabled="_saving" OnClick="SaveAsync">Schedule Debeaking</MudButton>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="8">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <div>
+                        <MudText Typo="Typo.h6" Class="font-semibold">Debeaking Records</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">10 rows per page with completion action.</MudText>
+                    </div>
+                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" />
+                </MudStack>
+
+                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading">
+                    <HeaderContent>
+                        <MudTh>Date</MudTh>
+                        <MudTh>Batch</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Age</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.ScheduledDate.ToString("MMM d, yyyy")</MudTd>
+                        <MudTd>@context.BatchNumber</MudTd>
+                        <MudTd>@context.DebeakingType</MudTd>
+                        <MudTd>@context.BirdAgeWeeks weeks</MudTd>
+                        <MudTd><MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Status)" Variant="Variant.Outlined">@StatusText(context.Status)</MudChip></MudTd>
+                        <MudTd>
+                            @if (context.Status != 1)
+                            {
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.TaskAlt" OnClick="@(() => CompleteAsync(context.Id))">Mark as complete</MudMenuItem>
+                                </MudMenu>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <EmptyState Icon="@Icons.Material.Filled.ContentCut" Title="No debeaking schedules" Description="Create a debeaking schedule for a batch." />
+                    </NoRecordsContent>
+                </MudTable>
+                <MudPagination Count="@TotalPages" Selected="_page" SelectedChanged="ChangePageAsync" Class="mt-3" />
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</ModulePageShell>
+
+@code {
+    private DebeakingMetrics _metrics = new();
+    private DebeakingForm _form = new();
+    private List<BatchOption> _batches = [];
+    private List<DebeakingRow> _records = [];
+    private Guid? _selectedBatchId;
+    private DateTime? _scheduledDate = DateTime.Today;
+    private int _page = 1;
+    private const int PageSize = 10;
+    private int _total;
+    private bool _loading;
+    private bool _saving;
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+    private IEnumerable<BatchVariantOption> SelectedVariants => _batches.FirstOrDefault(x => x.Id == _selectedBatchId)?.Variants ?? [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", true);
+            return;
+        }
+        await LoadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var client = CreateApiClient();
+            _batches = await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [];
+            _metrics = await client.GetFromJsonAsync<DebeakingMetrics>("/api/debeaking/metrics") ?? new();
+            var response = await client.GetFromJsonAsync<PagedDebeakingResponse>($"/api/debeaking?page={_page}&pageSize={PageSize}");
+            _records = response?.Items ?? [];
+            _total = response?.Total ?? 0;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Debeaking could not load: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task OnBatchChanged(Guid? batchId)
+    {
+        _selectedBatchId = batchId;
+        _form.BatchVariantId = SelectedVariants.FirstOrDefault()?.Id;
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_form.BatchVariantId is null || _scheduledDate is null || string.IsNullOrWhiteSpace(_form.DebeakingType))
+        {
+            Snackbar.Add("Batch color, debeaking type, and schedule date are required.", Severity.Warning);
+            return;
+        }
+        _saving = true;
+        try
+        {
+            var payload = new { _form.BatchVariantId, _form.DebeakingType, ScheduledDate = DateOnly.FromDateTime(_scheduledDate.Value), _form.BirdAgeWeeks, _form.Notes };
+            var response = await CreateApiClient().PostAsJsonAsync("/api/debeaking", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Debeaking could not be scheduled."), Severity.Error);
+                return;
+            }
+            Snackbar.Add("Debeaking scheduled.", Severity.Success);
+            _form = new();
+            _selectedBatchId = null;
+            _scheduledDate = DateTime.Today;
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CompleteAsync(Guid id)
+    {
+        var response = await CreateApiClient().PostAsync($"/api/debeaking/{id}/complete", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Debeaking could not be completed."), Severity.Error);
+            return;
+        }
+        Snackbar.Add("Debeaking marked as complete.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task ChangePageAsync(int page)
+    {
+        _page = page;
+        await LoadAsync();
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static string DisplayColor(int value) => value switch { 0 => "White", 1 => "Brown", 2 => "Black", 3 => "Speckled", _ => "Mixed" };
+    private static string StatusText(int value) => value switch { 1 => "Completed", 2 => "Overdue", _ => "Scheduled" };
+    private static Color StatusColor(int value) => value switch { 1 => Color.Success, 2 => Color.Error, _ => Color.Warning };
+
+    private sealed record DebeakingMetrics(int Scheduled = 0, int Completed = 0, int Overdue = 0);
+    private sealed record PagedDebeakingResponse(List<DebeakingRow> Items, int Total, int Page, int PageSize);
+    private sealed record DebeakingRow(Guid Id, Guid BatchId, string BatchNumber, Guid BatchVariantId, int BirdColor, string DebeakingType, DateOnly ScheduledDate, DateOnly? CompletedDate, int BirdAgeWeeks, int Status, string? Notes);
+    private sealed record BatchOption(Guid Id, string BatchNumber, int BirdType, DateOnly ArrivalDate, string Breed, string? Supplier, DateOnly ExpectedSaleDate, int Status, int InitialCount, int CurrentCount, decimal SurvivalRate, List<BatchVariantOption> Variants);
+    private sealed record BatchVariantOption(Guid Id, int Color, int EggColor, int InitialCount, int CurrentCount, string? Notes);
+    private sealed class DebeakingForm { public Guid? BatchVariantId { get; set; } public string DebeakingType { get; set; } = string.Empty; public int BirdAgeWeeks { get; set; } public string? Notes { get; set; } }
+}

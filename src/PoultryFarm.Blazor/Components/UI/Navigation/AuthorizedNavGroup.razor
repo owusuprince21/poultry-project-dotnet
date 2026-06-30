@@ -1,0 +1,32 @@
+@using MudBlazor
+@using PoultryFarm.Blazor.Services
+
+@inject AuthSession AuthSession
+
+@if (VisibleItems.Any())
+{
+    <MudText Typo="Typo.overline" Class="nav-section">
+        @Group.Title
+    </MudText>
+
+    @foreach (var item in VisibleItems)
+    {
+        <AuthorizedNavLink Item="@item"
+                           Match="@GetMatch(item)" />
+    }
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public NavGroup Group { get; set; } = default!;
+
+    private IEnumerable<NavItem> VisibleItems =>
+        Group.Items.Where(item => NavAuthorization.IsVisible(AuthSession, item.Permission));
+
+    private static NavLinkMatch GetMatch(NavItem item)
+    {
+        return item.Href == "/dashboard"
+            ? NavLinkMatch.All
+            : NavLinkMatch.Prefix;
+    }
+}

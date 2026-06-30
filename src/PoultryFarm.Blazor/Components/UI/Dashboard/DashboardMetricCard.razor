@@ -1,0 +1,41 @@
+@using MudBlazor
+
+<MudPaper Class="metric-card" Elevation="0">
+    <MudIcon Icon="@Icon"
+             Color="@Color"
+             Size="Size.Large" />
+
+    <div>
+        <MudText Typo="Typo.caption">
+            @Label
+        </MudText>
+
+        <MudText Typo="Typo.h5" Class="font-bold">
+            @Value
+        </MudText>
+
+        @if (!string.IsNullOrWhiteSpace(Detail))
+        {
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                @Detail
+            </MudText>
+        }
+    </div>
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string Value { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string Icon { get; set; } = string.Empty;
+
+    [Parameter]
+    public Color Color { get; set; } = Color.Primary;
+
+    [Parameter]
+    public string? Detail { get; set; }
+}

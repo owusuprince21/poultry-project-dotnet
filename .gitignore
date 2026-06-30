@@ -1,0 +1,26 @@
+# .NET build output
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+**/[Bb]in/
+**/[Oo]bj/
+
+# Local development settings / secrets
+appsettings.Development.json
+appsettings.Local.json
+*.Development.json
+.env
+.env.*
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

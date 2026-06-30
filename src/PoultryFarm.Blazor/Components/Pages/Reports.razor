@@ -1,0 +1,130 @@
+@page "/reports"
+@using System.Net.Http.Headers
+@using System.Text.Json
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Reports</PageTitle>
+
+<ModulePageShell Title="Reports" Subtitle="Generate operational reports by production, feed, health, and sales over a selected date range.">
+    <MudPaper Elevation="0" Class="work-surface pa-4">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="3">
+                <MudSelect T="string" @bind-Value="_operation" Label="Operation" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="@("production")">Egg Production</MudSelectItem>
+                    <MudSelectItem Value="@("feed")">Feed Management</MudSelectItem>
+                    <MudSelectItem Value="@("health")">Bird Health</MudSelectItem>
+                    <MudSelectItem Value="@("sales")">Sales</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="3"><MudDatePicker @bind-Date="_from" Label="From" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+            <MudItem xs="12" md="3"><MudDatePicker @bind-Date="_to" Label="To" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+            <MudItem xs="12" md="3"><MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Assessment" OnClick="GenerateAsync">Generate Report</MudButton></MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="3" Class="mt-4">
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Rows" Value="@_rows.Count.ToString("N0")" Detail="matching report entries" Icon="@Icons.Material.Filled.TableRows" Color="Color.Primary" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Total" Value="@_rows.Sum(x => x.Total).ToString("N2")" Detail="operation total" Icon="@Icons.Material.Filled.QueryStats" Color="Color.Success" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Window" Value="@($"{_from:MMM d}")" Detail="@($"to {_to:MMM d, yyyy}")" Icon="@Icons.Material.Filled.DateRange" Color="Color.Info" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Report" Value="@ReportTitle" Detail="selected operation" Icon="@Icons.Material.Filled.Assessment" Color="Color.Warning" />
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Elevation="0" Class="work-surface pa-4 mt-4">
+        <MudText Typo="Typo.h6" Class="font-semibold">@ReportTitle Report</MudText>
+        <MudTable Items="_rows" Dense="true" Hover="true" Elevation="0" Loading="_loading" RowsPerPage="10" Class="mt-3">
+            <HeaderContent><MudTh>Date</MudTh><MudTh>Status / Segment</MudTh><MudTh>Total</MudTh></HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
+                <MudTd>@context.Status</MudTd>
+                <MudTd>@context.Total.ToString("N2")</MudTd>
+            </RowTemplate>
+            <NoRecordsContent><EmptyState Icon="@Icons.Material.Filled.Assessment" Title="No report data" Description="Choose an operation and date range to generate report rows." /></NoRecordsContent>
+            <PagerContent><MudTablePager /></PagerContent>
+        </MudTable>
+    </MudPaper>
+</ModulePageShell>
+
+@code {
+    private string _operation = "production";
+    private DateTime? _from = DateTime.Today.AddDays(-30);
+    private DateTime? _to = DateTime.Today;
+    private List<ReportRow> _rows = [];
+    private bool _loading;
+
+    private string ReportTitle => _operation switch { "feed" => "Feed", "health" => "Bird Health", "sales" => "Sales", _ => "Egg Production" };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", true);
+            return;
+        }
+        await GenerateAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task GenerateAsync()
+    {
+        if (_from is null || _to is null)
+        {
+            Snackbar.Add("Select a valid report date range.", Severity.Warning);
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            var from = DateOnly.FromDateTime(_from.Value);
+            var to = DateOnly.FromDateTime(_to.Value);
+            var response = await CreateApiClient().GetFromJsonAsync<ReportResponse>($"/api/reports?operation={_operation}&from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+            _rows = ParseRows(response?.Data);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Report could not be generated: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static List<ReportRow> ParseRows(JsonElement? data)
+    {
+        if (data is null || data.Value.ValueKind != JsonValueKind.Array) return [];
+        var rows = new List<ReportRow>();
+        foreach (var item in data.Value.EnumerateArray())
+        {
+            var date = DateOnly.TryParse(item.GetProperty("date").GetString(), out var parsed) ? parsed : DateOnly.FromDateTime(DateTime.Today);
+            var status = item.TryGetProperty("status", out var statusValue) ? statusValue.ToString() : "Total";
+            var total = item.TryGetProperty("total", out var totalValue) && totalValue.TryGetDecimal(out var decimalValue) ? decimalValue : 0m;
+            rows.Add(new ReportRow(date, status, total));
+        }
+        return rows;
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private sealed record ReportResponse(string Operation, DateOnly From, DateOnly To, JsonElement Data);
+    private sealed record ReportRow(DateOnly Date, string Status, decimal Total);
+}

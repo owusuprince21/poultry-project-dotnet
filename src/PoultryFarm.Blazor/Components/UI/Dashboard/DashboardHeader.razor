@@ -1,0 +1,56 @@
+@using MudBlazor
+
+<div class="page-heading">
+    <div>
+        <MudText Typo="Typo.h4" Class="font-bold">
+            @Title
+        </MudText>
+
+        @if (!string.IsNullOrWhiteSpace(Subtitle))
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                @Subtitle
+            </MudText>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(LoggedInText))
+        {
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                @LoggedInText
+            </MudText>
+        }
+    </div>
+
+    @if (ShowActionButton)
+    {
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@ActionIcon"
+                   OnClick="@OnActionClick">
+            @ActionText
+        </MudButton>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Subtitle { get; set; }
+
+    [Parameter]
+    public string? LoggedInText { get; set; }
+
+    [Parameter]
+    public bool ShowActionButton { get; set; }
+
+    [Parameter]
+    public string ActionText { get; set; } = "Create";
+
+    [Parameter]
+    public string ActionIcon { get; set; } = Icons.Material.Filled.Add;
+
+    [Parameter]
+    public EventCallback OnActionClick { get; set; }
+}

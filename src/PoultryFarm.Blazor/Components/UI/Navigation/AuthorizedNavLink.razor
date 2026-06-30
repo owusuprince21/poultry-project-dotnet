@@ -1,0 +1,24 @@
+@using MudBlazor
+@using PoultryFarm.Blazor.Services
+
+@inject AuthSession AuthSession
+
+@if (IsVisible)
+{
+    <MudNavLink Href="@Item.Href"
+                Icon="@Item.Icon"
+                Match="@Match">
+        @Item.Title
+    </MudNavLink>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public NavItem Item { get; set; } = default!;
+
+    [Parameter]
+    public NavLinkMatch Match { get; set; } = NavLinkMatch.Prefix;
+
+    private bool IsVisible =>
+        NavAuthorization.IsVisible(AuthSession, Item.Permission);
+}

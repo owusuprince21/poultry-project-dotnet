@@ -1,0 +1,10 @@
+@using MudBlazor
+
+<MudContainer MaxWidth="MaxWidth.False" Class="dashboard-shell">
+    @ChildContent
+</MudContainer>
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

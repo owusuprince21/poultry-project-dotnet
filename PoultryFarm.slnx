@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PoultryFarm.Api/PoultryFarm.Api.csproj" />
+    <Project Path="src/PoultryFarm.Application/PoultryFarm.Application.csproj" />
+    <Project Path="src/PoultryFarm.Blazor/PoultryFarm.Blazor.csproj" />
+    <Project Path="src/PoultryFarm.Domain/PoultryFarm.Domain.csproj" />
+    <Project Path="src/PoultryFarm.Infrastructure/PoultryFarm.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PoultryFarm.IntegrationTests/PoultryFarm.IntegrationTests.csproj" />
+    <Project Path="tests/PoultryFarm.UnitTests/PoultryFarm.UnitTests.csproj" />
+  </Folder>
+</Solution>

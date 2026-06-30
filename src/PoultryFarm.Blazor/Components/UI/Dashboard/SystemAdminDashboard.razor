@@ -1,0 +1,197 @@
+@using System.Net.Http.Headers
+@using MudBlazor
+@using PoultryFarm.Blazor.Services
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<DashboardHeader Title="System Admin Dashboard"
+                 Subtitle="Enterprise control center for tenants, users, roles, audit, and platform governance."
+                 ShowActionButton="true"
+                 ActionText="New Company"
+                 ActionIcon="@Icons.Material.Filled.AddBusiness" />
+
+@if (_loading)
+{
+    <MudPaper Class="work-surface" Elevation="0">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+            <MudText Typo="Typo.body2">Loading platform overview...</MudText>
+        </MudStack>
+    </MudPaper>
+}
+else if (_overview is null)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+        System dashboard overview could not be loaded.
+    </MudAlert>
+}
+else
+{
+    <MudGrid Spacing="3">
+        @foreach (var stat in Metrics)
+        {
+            <MudItem xs="12" sm="6" lg="3">
+                <DashboardMetricCard Label="@stat.Label"
+                                     Value="@stat.Value"
+                                     Detail="@stat.Detail"
+                                     Icon="@stat.Icon"
+                                     Color="@stat.Color" />
+            </MudItem>
+        }
+    </MudGrid>
+
+    <MudGrid Spacing="3" Class="mt-4">
+        @foreach (var chart in ChartViewModels)
+        {
+            <MudItem xs="12" lg="6">
+                <MudPaper Class="work-surface" Elevation="0">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                        <div>
+                            <MudText Typo="Typo.h6" Class="font-semibold">@chart.Title</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">@chart.Subtitle</MudText>
+                        </div>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">
+                            14 days
+                        </MudChip>
+                    </MudStack>
+
+                    <MudChart T="double"
+                              ChartType="ChartType.Line"
+                              ChartSeries="@chart.Series"
+                              ChartLabels="@chart.Labels"
+                              ChartOptions="@_chartOptions"
+                              Width="100%"
+                              Height="320px"
+                              @bind-SelectedIndex="@chart.SelectedIndex" />
+
+                    @if (chart.SelectedIndex >= 0 && chart.SelectedIndex < chart.Labels.Length)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            Selected point: @chart.Labels[chart.SelectedIndex]
+                        </MudText>
+                    }
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+
+    <MudGrid Spacing="3" Class="mt-4">
+        <MudItem xs="12" lg="8">
+            <DashboardModuleTable Title="System Administration Modules"
+                                  Items="@Modules" />
+        </MudItem>
+
+        <MudItem xs="12" lg="4">
+            <DashboardMessagesCard Title="Platform Signals"
+                                   AlertMessage="@($"Last refreshed {_overview.GeneratedAt.LocalDateTime:g}. SignalR activity hub is available at <code>/hubs/activity</code>.")"
+                                   Items="@_messages" />
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private SystemAdminDashboardOverview? _overview;
+    private bool _loading = true;
+
+    private readonly ChartOptions _chartOptions = new()
+    {
+        ShowLegend = true,
+        ShowToolTips = true,
+        ChartPalette = ["#2563eb", "#059669", "#f59e0b", "#ef4444"]
+    };
+
+    private readonly IReadOnlyCollection<DashboardMessageItem> _messages =
+    [
+        new("Company onboarding and user creation are tracked from live Identity data.", Icons.Material.Filled.Business),
+        new("Blocked account counts reflect failed-login lockouts and admin blocks.", Icons.Material.Filled.Security),
+        new("Farm operation charts aggregate production and feed activity across companies.", Icons.Material.Filled.Analytics)
+    ];
+
+    private IReadOnlyCollection<DashboardMetricItem> Metrics =>
+        _overview?.Metrics
+            .Select(x => new DashboardMetricItem(x.Label, x.Value, ResolveIcon(x.Icon), ResolveColor(x.Color), x.Detail))
+            .ToArray() ?? [];
+
+    private IReadOnlyCollection<DashboardModuleItem> Modules =>
+        _overview?.Modules
+            .Select(x => new DashboardModuleItem(x.Name, x.Status, x.Priority, ResolveColor(x.Color)))
+            .ToArray() ?? [];
+
+    private IReadOnlyCollection<LineChartViewModel> ChartViewModels =>
+        _overview?.Charts
+            .Select(x => new LineChartViewModel(
+                x.Title,
+                x.Subtitle,
+                x.Labels.ToArray(),
+                x.Series
+                    .Select(series => new ChartSeries<double>
+                    {
+                        Name = series.Name,
+                        Data = series.Data.Select(value => (double)value).ToArray()
+                    })
+                    .ToList()))
+            .ToArray() ?? [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthSession.LoadAsync();
+        await LoadOverviewAsync();
+    }
+
+    private async Task LoadOverviewAsync()
+    {
+        _loading = true;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+
+            _overview = await client.GetFromJsonAsync<SystemAdminDashboardOverview>("/api/dashboard/system-admin");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"System dashboard error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string ResolveIcon(string icon) =>
+        icon switch
+        {
+            "business" => Icons.Material.Filled.Business,
+            "groups" => Icons.Material.Filled.Groups,
+            "agriculture" => Icons.Material.Filled.Agriculture,
+            "notifications_active" => Icons.Material.Filled.NotificationsActive,
+            _ => Icons.Material.Filled.Analytics
+        };
+
+    private static Color ResolveColor(string color) =>
+        color switch
+        {
+            "Primary" => Color.Primary,
+            "Success" => Color.Success,
+            "Warning" => Color.Warning,
+            "Error" => Color.Error,
+            "Info" => Color.Info,
+            _ => Color.Default
+        };
+
+    private sealed class LineChartViewModel(
+        string title,
+        string subtitle,
+        string[] labels,
+        List<ChartSeries<double>> series)
+    {
+        public string Title { get; } = title;
+        public string Subtitle { get; } = subtitle;
+        public string[] Labels { get; } = labels;
+        public List<ChartSeries<double>> Series { get; } = series;
+        public int SelectedIndex { get; set; } = -1;
+    }
+}

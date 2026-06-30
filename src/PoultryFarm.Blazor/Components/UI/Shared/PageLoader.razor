@@ -1,0 +1,20 @@
+@using MudBlazor
+
+<MudContainer MaxWidth="MaxWidth.False" Class="dashboard-shell">
+    <MudPaper Class="work-surface" Elevation="0">
+        <MudStack AlignItems="AlignItems.Center"
+                  Justify="Justify.Center"
+                  Style="min-height: 300px;">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                @Message
+            </MudText>
+        </MudStack>
+    </MudPaper>
+</MudContainer>
+
+@code {
+    [Parameter]
+    public string Message { get; set; } = "Loading...";
+}

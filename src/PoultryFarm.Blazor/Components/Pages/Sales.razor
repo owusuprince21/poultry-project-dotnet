@@ -1,0 +1,526 @@
+@page "/sales"
+@implements IAsyncDisposable
+@using System.Net.Http.Headers
+@using System.Text.Json.Serialization
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Sales</PageTitle>
+
+<ModulePageShell Title="Sales" Subtitle="Sell eggs and birds, generate receipts, and identify top customers by revenue.">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Small Eggs" Value="@Crates(_metrics.Small)" Detail="@($"{_metrics.Small:N0} eggs available")" Icon="@Icons.Material.Filled.Egg" Color="Color.Info" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Medium Eggs" Value="@Crates(_metrics.Medium)" Detail="@($"{_metrics.Medium:N0} eggs available")" Icon="@Icons.Material.Filled.Egg" Color="Color.Primary" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Large Eggs" Value="@Crates(_metrics.Large)" Detail="@($"{_metrics.Large:N0} eggs available")" Icon="@Icons.Material.Filled.Egg" Color="Color.Success" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Jumbo Eggs" Value="@Crates(_metrics.Jumbo)" Detail="@($"{_metrics.Jumbo:N0} eggs available")" Icon="@Icons.Material.Filled.EggAlt" Color="Color.Warning" />
+        </MudItem>
+    </MudGrid>
+
+    <MudGrid Spacing="3" Class="mt-4">
+        <MudItem xs="12" lg="5">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudTabs @bind-ActivePanelIndex="_saleTab" Rounded="true" Elevation="0">
+                    <MudTabPanel Text="Egg sales" Icon="@Icons.Material.Filled.Egg" />
+                    <MudTabPanel Text="Bird sales" Icon="@Icons.Material.Filled.Pets" />
+                </MudTabs>
+
+                @if (_saleTab == 0)
+                {
+                    <MudStack Spacing="3" Class="mt-4">
+                        <MudAutocomplete T="string"
+                                         Label="Customer name"
+                                         HelperText="Type a new customer name, or pick a previous buyer."
+                                         @bind-Value="_eggSale.CustomerName"
+                                         SearchFunc="SearchCustomers"
+                                         Variant="Variant.Outlined"
+                                         Margin="Margin.Dense"
+                                         CoerceText="true"
+                                         CoerceValue="true"
+                                         ResetValueOnEmptyText="false"
+                                         Clearable="true" />
+                        <MudSelect T="Guid?" Label="Batch" Value="_selectedEggBatchId" ValueChanged="OnEggBatchChanged" Variant="Variant.Outlined" Margin="Margin.Dense">
+                            @foreach (var batch in LayerBatches)
+                            {
+                                <MudSelectItem T="Guid?" Value="@batch.Id">@batch.BatchNumber - @batch.Breed</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudSelect T="Guid?" Label="Bird color" @bind-Value="_eggSale.BatchVariantId" Variant="Variant.Outlined" Margin="Margin.Dense">
+                            @foreach (var variant in SelectedEggVariants)
+                            {
+                                <MudSelectItem T="Guid?" Value="@variant.Id">@DisplayColor(variant.Color)</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudDatePicker @bind-Date="_eggSaleDate" Label="Sale date" Variant="Variant.Outlined" Margin="Margin.Dense" />
+
+                        <MudStack Spacing="2">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                <div>
+                                    <MudText Typo="Typo.subtitle2" Class="font-semibold">Egg sizes</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">Add each egg size the customer is buying.</MudText>
+                                </div>
+                                <MudIconButton Icon="@Icons.Material.Filled.Add"
+                                               Color="Color.Primary"
+                                               Variant="Variant.Filled"
+                                               Size="Size.Small"
+                                               OnClick="AddEggSaleLine" />
+                            </MudStack>
+
+                            @foreach (var line in _eggSale.Lines)
+                            {
+                                <MudPaper Elevation="0" Class="egg-sale-line">
+                                    <MudGrid Spacing="2">
+                                        <MudItem xs="12" md="4">
+                                            <MudSelect T="int" Label="Egg type" @bind-Value="line.Size" Variant="Variant.Outlined" Margin="Margin.Dense" HelperText="@AvailableEggText(line.Size)">
+                                                <MudSelectItem Value="0">Small</MudSelectItem>
+                                                <MudSelectItem Value="1">Medium</MudSelectItem>
+                                                <MudSelectItem Value="2">Large</MudSelectItem>
+                                                <MudSelectItem Value="3">Jumbo</MudSelectItem>
+                                                <MudSelectItem Value="4">Unsorted</MudSelectItem>
+                                            </MudSelect>
+                                        </MudItem>
+                                        <MudItem xs="6" md="2"><MudNumericField T="int" @bind-Value="line.Crates" Label="Crates" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" Error="@HasEggLineStockError(line)" ErrorText="@EggLineStockError(line)" /></MudItem>
+                                        <MudItem xs="6" md="2"><MudNumericField T="int" @bind-Value="line.Pieces" Label="Pieces" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" Max="29" Error="@HasEggLineStockError(line)" ErrorText="@EggLineStockError(line)" /></MudItem>
+                                        <MudItem xs="10" md="3"><MudNumericField T="decimal" @bind-Value="line.CostPerCrate" Label="GHS / crate" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" /></MudItem>
+                                        <MudItem xs="2" md="1" Class="egg-sale-line-remove">
+                                            <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                                           Color="Color.Error"
+                                                           Size="Size.Small"
+                                                           Disabled="@(_eggSale.Lines.Count == 1)"
+                                                           OnClick="@(() => RemoveEggSaleLine(line))" />
+                                        </MudItem>
+                                    </MudGrid>
+                                </MudPaper>
+                            }
+                        </MudStack>
+
+                        @if (HasEggStockErrors)
+                        {
+                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">@EggStockErrorSummary</MudAlert>
+                        }
+                        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">Receipt amount: GHS @EggSaleTotal.ToString("N2")</MudAlert>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Receipt" Disabled="_saving" OnClick="RecordEggSaleAsync">Record Egg Sale</MudButton>
+                    </MudStack>
+                }
+                else
+                {
+                    <MudStack Spacing="3" Class="mt-4">
+                        <MudAutocomplete T="string"
+                                         Label="Customer name"
+                                         HelperText="Type a new customer name, or pick a previous buyer."
+                                         @bind-Value="_birdSale.CustomerName"
+                                         SearchFunc="SearchCustomers"
+                                         Variant="Variant.Outlined"
+                                         Margin="Margin.Dense"
+                                         CoerceText="true"
+                                         CoerceValue="true"
+                                         ResetValueOnEmptyText="false"
+                                         Clearable="true" />
+                        <MudSelect T="Guid?" Label="Sale batch" Value="_selectedBirdBatchId" ValueChanged="OnBirdBatchChanged" Variant="Variant.Outlined" Margin="Margin.Dense">
+                            @foreach (var batch in _birdSaleBatches)
+                            {
+                                <MudSelectItem T="Guid?" Value="@batch.BatchId">@batch.BatchNumber - @batch.BirdType (@batch.Status)</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudSelect T="Guid?" Label="Bird color" @bind-Value="_birdSale.BatchVariantId" Variant="Variant.Outlined" Margin="Margin.Dense">
+                            @foreach (var variant in SelectedBirdVariants)
+                            {
+                                <MudSelectItem T="Guid?" Value="@variant.VariantId">@variant.Color (@variant.AvailableBirds.ToString("N0") available)</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="4"><MudDatePicker @bind-Date="_birdSaleDate" Label="Sale date" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+                            <MudItem xs="12" md="4"><MudNumericField T="int" @bind-Value="_birdSale.BirdsSold" Label="Birds sold" Variant="Variant.Outlined" Min="1" /></MudItem>
+                            <MudItem xs="12" md="4"><MudNumericField T="decimal" @bind-Value="_birdSale.PricePerBird" Label="GHS / bird" Variant="Variant.Outlined" Min="0" /></MudItem>
+                        </MudGrid>
+                        <MudTextField @bind-Value="_birdSale.Notes" Label="Notes" Variant="Variant.Outlined" Lines="3" />
+                        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">Sale amount: GHS @BirdSaleTotal.ToString("N2")</MudAlert>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PointOfSale" Disabled="_saving" OnClick="RecordBirdSaleAsync">Record Bird Sale</MudButton>
+                    </MudStack>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="7">
+            <MudGrid Spacing="3">
+                <MudItem xs="12">
+                    <MudPaper Elevation="0" Class="work-surface pa-4">
+                        <MudText Typo="Typo.h6" Class="font-semibold">Top 5 Customers</MudText>
+                        <MudTable Items="_leaderboard" Dense="true" Hover="true" Elevation="0">
+                            <HeaderContent><MudTh>Customer</MudTh><MudTh>Purchases</MudTh><MudTh>Revenue</MudTh></HeaderContent>
+                            <RowTemplate>
+                                <MudTd>@context.Customer</MudTd>
+                                <MudTd>@context.Purchases.ToString("N0")</MudTd>
+                                <MudTd>GHS @context.Revenue.ToString("N2")</MudTd>
+                            </RowTemplate>
+                            <NoRecordsContent><MudText Typo="Typo.body2" Color="Color.Secondary">No customer sales yet.</MudText></NoRecordsContent>
+                        </MudTable>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudPaper Elevation="0" Class="work-surface pa-4">
+                        <MudText Typo="Typo.h6" Class="font-semibold">Sales Records</MudText>
+                        <MudTable Items="_sales" Dense="true" Hover="true" Elevation="0" Loading="_loading" RowsPerPage="10">
+                            <HeaderContent><MudTh>Date</MudTh><MudTh>Type</MudTh><MudTh>Customer</MudTh><MudTh>Amount</MudTh><MudTh>Receipt</MudTh><MudTh></MudTh></HeaderContent>
+                            <RowTemplate>
+                                <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
+                                <MudTd>@context.Type</MudTd>
+                                <MudTd>@context.Customer</MudTd>
+                                <MudTd>GHS @context.Amount.ToString("N2")</MudTd>
+                                <MudTd>@context.Receipt</MudTd>
+                                <MudTd>
+                                    @if (context.Type == "Egg" && !string.IsNullOrWhiteSpace(context.Receipt))
+                                    {
+                                        <MudButton Variant="Variant.Outlined"
+                                                   Color="Color.Primary"
+                                                   Size="Size.Small"
+                                                   StartIcon="@Icons.Material.Filled.Receipt"
+                                                   Disabled="_loadingReceipt"
+                                                   OnClick="@(() => OpenEggReceiptPdfAsync(context.Id))">
+                                            PDF
+                                        </MudButton>
+                                    }
+                                </MudTd>
+                            </RowTemplate>
+                            <NoRecordsContent><EmptyState Icon="@Icons.Material.Filled.PointOfSale" Title="No sales recorded" Description="Record egg or bird sales to build the revenue history." /></NoRecordsContent>
+                            <PagerContent><MudTablePager /></PagerContent>
+                        </MudTable>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+        </MudItem>
+    </MudGrid>
+</ModulePageShell>
+
+<MudDialog @bind-Visible="_receiptDialogOpen" Options="_receiptDialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Sales receipt</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrWhiteSpace(_receiptPdfUrl))
+        {
+            <iframe src="@_receiptPdfUrl" title="Sales receipt PDF preview" class="receipt-preview-frame"></iframe>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" Color="Color.Default" OnClick="CloseReceiptPreviewAsync">Close</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download" OnClick="DownloadReceiptPdfAsync">Download</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private SalesMetrics _metrics = new();
+    private List<BatchOption> _batches = [];
+    private List<BirdSaleBatch> _birdSaleBatches = [];
+    private List<string> _customers = [];
+    private List<CustomerRank> _leaderboard = [];
+    private List<SaleRow> _sales = [];
+    private EggSaleForm _eggSale = new();
+    private BirdSaleForm _birdSale = new();
+    private Guid? _selectedEggBatchId;
+    private Guid? _selectedBirdBatchId;
+    private DateTime? _eggSaleDate = DateTime.Today;
+    private DateTime? _birdSaleDate = DateTime.Today;
+    private int _saleTab;
+    private bool _loading;
+    private bool _saving;
+    private bool _loadingReceipt;
+    private bool _receiptDialogOpen;
+    private string? _receiptPdfUrl;
+    private string _receiptPdfFileName = "receipt.pdf";
+    private readonly DialogOptions _receiptDialogOptions = new() { CloseButton = true, FullWidth = true, MaxWidth = MaxWidth.ExtraSmall };
+
+    private IEnumerable<BatchOption> LayerBatches => _batches.Where(x => x.BirdType == 0);
+    private IEnumerable<BatchVariantOption> SelectedEggVariants => _batches.FirstOrDefault(x => x.Id == _selectedEggBatchId)?.Variants ?? [];
+    private IEnumerable<BirdSaleVariant> SelectedBirdVariants => _birdSaleBatches.FirstOrDefault(x => x.BatchId == _selectedBirdBatchId)?.Variants ?? [];
+    private decimal EggSaleTotal => _eggSale.Lines.Sum(x => ((x.Crates * 30 + x.Pieces) / 30m) * x.CostPerCrate);
+    private decimal BirdSaleTotal => _birdSale.BirdsSold * _birdSale.PricePerBird;
+    private bool HasEggStockErrors => _eggSale.Lines.Any(HasEggLineStockError);
+    private string EggStockErrorSummary => _eggSale.Lines.Select(EggLineStockError).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "Reduce the egg quantity to match available stock.";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", true);
+            return;
+        }
+        await LoadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var client = CreateApiClient();
+            _metrics = await client.GetFromJsonAsync<SalesMetrics>("/api/sales/metrics") ?? new();
+            _batches = await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [];
+            _birdSaleBatches = await client.GetFromJsonAsync<List<BirdSaleBatch>>("/api/batches/bird-sale-options") ?? [];
+            _customers = await client.GetFromJsonAsync<List<string>>("/api/sales/customers") ?? [];
+            _leaderboard = await client.GetFromJsonAsync<List<CustomerRank>>("/api/sales/leaderboard") ?? [];
+            _sales = await client.GetFromJsonAsync<List<SaleRow>>("/api/sales") ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Sales could not load: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task<IEnumerable<string>> SearchCustomers(string value, CancellationToken cancellationToken)
+    {
+        var results = string.IsNullOrWhiteSpace(value)
+            ? _customers.Take(10)
+            : _customers.Where(x => x.Contains(value, StringComparison.OrdinalIgnoreCase)).Take(10);
+        return Task.FromResult(results);
+    }
+
+    private Task OnEggBatchChanged(Guid? value)
+    {
+        _selectedEggBatchId = value;
+        var variant = SelectedEggVariants.FirstOrDefault();
+        _eggSale.BatchId = value;
+        _eggSale.BatchVariantId = variant?.Id;
+        _eggSale.EggColor = variant?.EggColor ?? 2;
+        return Task.CompletedTask;
+    }
+
+    private void AddEggSaleLine()
+    {
+        var usedSizes = _eggSale.Lines.Select(x => x.Size).ToHashSet();
+        var nextSize = Enumerable.Range(0, 5).FirstOrDefault(size => !usedSizes.Contains(size), 2);
+        _eggSale.Lines.Add(new EggSaleLineForm { Size = nextSize });
+    }
+
+    private void RemoveEggSaleLine(EggSaleLineForm line)
+    {
+        if (_eggSale.Lines.Count <= 1)
+        {
+            return;
+        }
+
+        _eggSale.Lines.Remove(line);
+    }
+
+    private Task OnBirdBatchChanged(Guid? value)
+    {
+        _selectedBirdBatchId = value;
+        _birdSale.BatchId = value;
+        _birdSale.BatchVariantId = SelectedBirdVariants.FirstOrDefault()?.VariantId;
+        return Task.CompletedTask;
+    }
+
+    private async Task RecordEggSaleAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_eggSale.CustomerName) || _eggSale.BatchId is null || _eggSale.BatchVariantId is null || _eggSaleDate is null)
+        {
+            Snackbar.Add("Customer, batch, bird color, and sale date are required.", Severity.Warning);
+            return;
+        }
+
+        if (_eggSale.Lines.Count == 0 || _eggSale.Lines.Any(x => x.Crates < 0 || x.Pieces < 0 || x.Pieces > 29 || x.CostPerCrate <= 0 || x.Crates * 30 + x.Pieces <= 0))
+        {
+            Snackbar.Add("Add at least one egg size with quantity and GHS per crate.", Severity.Warning);
+            return;
+        }
+
+        if (HasEggStockErrors)
+        {
+            Snackbar.Add(EggStockErrorSummary, Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var payload = new
+            {
+                _eggSale.CustomerName,
+                BatchId = _eggSale.BatchId.Value,
+                BatchVariantId = _eggSale.BatchVariantId.Value,
+                _eggSale.EggColor,
+                SaleDate = DateOnly.FromDateTime(_eggSaleDate.Value),
+                Items = _eggSale.Lines.Select(x => new { x.Size, x.Crates, x.Pieces, x.CostPerCrate }).ToArray()
+            };
+            var response = await CreateApiClient().PostAsJsonAsync("/api/sales/eggs", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Egg sale could not be recorded."), Severity.Error);
+                return;
+            }
+            var receipt = await response.Content.ReadFromJsonAsync<SaleReceipt>();
+            if (receipt is null)
+            {
+                Snackbar.Add("Egg sale was recorded, but the receipt could not be opened.", Severity.Warning);
+            }
+            else
+            {
+                Snackbar.Add("Egg sale recorded successfully.", Severity.Success);
+                await PreviewEggReceiptPdfAsync(receipt.Id, receipt.ReceiptId);
+            }
+            _eggSale = new();
+            _selectedEggBatchId = null;
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task OpenEggReceiptPdfAsync(Guid saleId)
+    {
+        await PreviewEggReceiptPdfAsync(saleId, null);
+    }
+
+    private async Task PreviewEggReceiptPdfAsync(Guid saleId, string? receiptId)
+    {
+        _loadingReceipt = true;
+        try
+        {
+            var client = CreateApiClient();
+            var pdfUrl = new Uri(client.BaseAddress!, $"/api/sales/eggs/{saleId}/receipt.pdf").ToString();
+            await RevokeReceiptPdfUrlAsync();
+            _receiptPdfUrl = await JSRuntime.InvokeAsync<string>("poultryFarmUi.loadAuthenticatedPdfObjectUrl", pdfUrl, AuthSession.Token);
+            _receiptPdfFileName = string.IsNullOrWhiteSpace(receiptId) ? "receipt.pdf" : $"{receiptId}.pdf";
+            _receiptDialogOpen = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"PDF receipt could not be previewed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loadingReceipt = false;
+        }
+    }
+
+    private async Task RecordBirdSaleAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_birdSale.CustomerName) || _birdSale.BatchId is null || _birdSale.BatchVariantId is null || _birdSaleDate is null || _birdSale.BirdsSold <= 0)
+        {
+            Snackbar.Add("Customer, batch, bird color, sale date, and birds sold are required.", Severity.Warning);
+            return;
+        }
+        _saving = true;
+        try
+        {
+            var payload = new { _birdSale.CustomerName, BatchId = _birdSale.BatchId.Value, BatchVariantId = _birdSale.BatchVariantId.Value, SaleDate = DateOnly.FromDateTime(_birdSaleDate.Value), _birdSale.BirdsSold, _birdSale.PricePerBird, _birdSale.Notes };
+            var response = await CreateApiClient().PostAsJsonAsync("/api/sales/birds", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Bird sale could not be recorded."), Severity.Error);
+                return;
+            }
+            Snackbar.Add("Bird sale recorded.", Severity.Success);
+            _birdSale = new();
+            _selectedBirdBatchId = null;
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static string Crates(int eggs) => $"{eggs / 30m:N2} crates";
+    private static string DisplayColor(int value) => value switch { 0 => "White", 1 => "Brown", 2 => "Black", 3 => "Speckled", _ => "Mixed" };
+    private static string DisplayEggSize(int value) => value switch { 0 => "Small", 1 => "Medium", 2 => "Large", 3 => "Jumbo", 4 => "Unsorted", _ => "Eggs" };
+    private int AvailableEggs(int size) => size switch { 0 => _metrics.Small, 1 => _metrics.Medium, 2 => _metrics.Large, 3 => _metrics.Jumbo, 4 => _metrics.Unsorted, _ => 0 };
+    private int RequestedEggsForSize(int size) => _eggSale.Lines.Where(x => x.Size == size).Sum(x => x.Crates * 30 + x.Pieces);
+    private static string FormatEggQuantity(int eggs) => $"{eggs / 30:N0} crates, {eggs % 30:N0} pieces";
+    private string AvailableEggText(int size) => $"{FormatEggQuantity(AvailableEggs(size))} available";
+
+    private bool HasEggLineStockError(EggSaleLineForm line) => RequestedEggsForSize(line.Size) > AvailableEggs(line.Size);
+
+    private string EggLineStockError(EggSaleLineForm line)
+    {
+        if (!HasEggLineStockError(line))
+        {
+            return string.Empty;
+        }
+
+        return $"Only {FormatEggQuantity(AvailableEggs(line.Size))} of {DisplayEggSize(line.Size).ToLowerInvariant()} eggs are available.";
+    }
+
+    private async Task DownloadReceiptPdfAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_receiptPdfUrl))
+        {
+            return;
+        }
+
+        await JSRuntime.InvokeVoidAsync("poultryFarmUi.downloadObjectUrl", _receiptPdfUrl, _receiptPdfFileName);
+    }
+
+    private async Task CloseReceiptPreviewAsync()
+    {
+        _receiptDialogOpen = false;
+        await RevokeReceiptPdfUrlAsync();
+    }
+
+    private async Task RevokeReceiptPdfUrlAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_receiptPdfUrl))
+        {
+            return;
+        }
+
+        await JSRuntime.InvokeVoidAsync("poultryFarmUi.revokeObjectUrl", _receiptPdfUrl);
+        _receiptPdfUrl = null;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await RevokeReceiptPdfUrlAsync();
+    }
+
+    private sealed record SalesMetrics(int Small = 0, int Medium = 0, int Large = 0, int Jumbo = 0, int Unsorted = 0);
+    private sealed record BatchOption(Guid Id, string BatchNumber, int BirdType, DateOnly ArrivalDate, string Breed, string? Supplier, DateOnly ExpectedSaleDate, int Status, int InitialCount, int CurrentCount, decimal SurvivalRate, List<BatchVariantOption> Variants);
+    private sealed record BatchVariantOption(Guid Id, int Color, int EggColor, int InitialCount, int CurrentCount, string? Notes);
+    private sealed record CustomerRank(string Customer, decimal Revenue, int Purchases);
+    private sealed record SaleRow(Guid Id, string Type, DateOnly Date, string Customer, decimal Amount, string Receipt);
+    private sealed record SaleReceipt(Guid Id, string ReceiptId, string BuyerName, DateOnly SaleDate, decimal GrandTotal, int Eggs, int Crates, int Pieces, IReadOnlyCollection<SaleReceiptLine> Items);
+    private sealed record SaleReceiptLine(int Size, int Eggs, int Crates, int Pieces, decimal CostPerCrate, decimal LineTotal);
+    private sealed class EggSaleForm { public string CustomerName { get; set; } = string.Empty; public Guid? BatchId { get; set; } public Guid? BatchVariantId { get; set; } public int EggColor { get; set; } = 2; public List<EggSaleLineForm> Lines { get; set; } = [new()]; }
+    private sealed class EggSaleLineForm { public int Size { get; set; } = 2; public int Crates { get; set; } public int Pieces { get; set; } public decimal CostPerCrate { get; set; } }
+    private sealed class BirdSaleForm { public string CustomerName { get; set; } = string.Empty; public Guid? BatchId { get; set; } public Guid? BatchVariantId { get; set; } public int BirdsSold { get; set; } = 1; public decimal PricePerBird { get; set; } public string? Notes { get; set; } }
+    private sealed class BirdSaleBatch
+    {
+        [JsonPropertyName("batch_id")] public Guid BatchId { get; set; }
+        [JsonPropertyName("batch_number")] public string BatchNumber { get; set; } = string.Empty;
+        [JsonPropertyName("bird_type")] public string BirdType { get; set; } = string.Empty;
+        [JsonPropertyName("status")] public string Status { get; set; } = string.Empty;
+        [JsonPropertyName("variants")] public List<BirdSaleVariant> Variants { get; set; } = [];
+    }
+    private sealed class BirdSaleVariant
+    {
+        [JsonPropertyName("variant_id")] public Guid VariantId { get; set; }
+        [JsonPropertyName("color")] public string Color { get; set; } = string.Empty;
+        [JsonPropertyName("available_birds")] public int AvailableBirds { get; set; }
+    }
+}

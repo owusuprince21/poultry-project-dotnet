@@ -1,0 +1,92 @@
+@page "/dashboard"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Dashboard
+@using PoultryFarm.Blazor.Components.UI.Shared
+
+@inject AuthSession AuthSession
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Poultry Farm Dashboard</PageTitle>
+
+@if (!_authChecked)
+{
+    <PageLoader Message="Checking session..." />
+}
+else
+{
+    <DashboardShell>
+        @switch (NormalizedRole)
+        {
+            case "super_admin":
+            case "sub_admin":
+            case "system_admin":
+            case "systemadmin":
+                <SystemAdminDashboard />
+                break;
+
+            case "farm_admin":
+            case "farmadmin":
+            case "admin":
+                <FarmAdminDashboard />
+                break;
+
+            case "worker":
+            case "farm_worker":
+                <WorkerDashboard />
+                break;
+
+            default:
+                <FarmAdminDashboard />
+                break;
+        }
+    </DashboardShell>
+}
+
+@code {
+    private bool _authChecked;
+
+    private string NormalizedRole =>
+        AuthSession.Role?.Trim().Replace("-", "_").ToLowerInvariant() ?? string.Empty;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+{
+    if (!firstRender)
+    {
+        return;
+    }
+
+    try
+    {
+        await AuthSession.LoadAsync();
+
+        if (!AuthSession.IsAuthenticated)
+        {
+            Snackbar.Add("You are not authenticated. Returning to login.", Severity.Error);
+
+            await Task.Delay(300);
+
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (AuthSession.MustChangePassword)
+        {
+            Navigation.NavigateTo("/force-password-change", replace: true);
+            return;
+        }
+
+        _authChecked = true;
+
+        await InvokeAsync(StateHasChanged);
+    }
+    catch (Exception ex)
+    {
+        Snackbar.Add($"Dashboard error: {ex.Message}", Severity.Error);
+
+        Navigation.NavigateTo("/", replace: true);
+    }
+}
+}

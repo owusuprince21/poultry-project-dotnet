@@ -1,0 +1,255 @@
+@page "/medication"
+@using System.Net.Http.Headers
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Medication</PageTitle>
+
+<ModulePageShell Title="Medication" Subtitle="Schedule vaccines and medicines, record completed treatments, and monitor medication alerts.">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="4">
+            <DashboardMetricCard Label="Scheduled" Value="@_metrics.Scheduled.ToString("N0")" Detail="open medication schedules" Icon="@Icons.Material.Filled.Event" Color="Color.Primary" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <DashboardMetricCard Label="Completed" Value="@_metrics.Completed.ToString("N0")" Detail="administered medicines" Icon="@Icons.Material.Filled.TaskAlt" Color="Color.Success" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <DashboardMetricCard Label="Alerts" Value="@_metrics.Alerts.ToString("N0")" Detail="due today or tomorrow" Icon="@Icons.Material.Filled.NotificationsActive" Color="Color.Warning" />
+        </MudItem>
+    </MudGrid>
+
+    <MudGrid Spacing="3" Class="mt-4">
+        <MudItem xs="12" lg="5">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudTabs @bind-ActivePanelIndex="_formTab" Rounded="true" Elevation="0">
+                    <MudTabPanel Text="Daily medication records" Icon="@Icons.Material.Filled.MedicalServices" />
+                    <MudTabPanel Text="Medication schedule" Icon="@Icons.Material.Filled.Event" />
+                </MudTabs>
+
+                <MudStack Spacing="3" Class="mt-4">
+                    <MudSelect T="Guid?" Label="Batch" Value="_selectedBatchId" ValueChanged="OnBatchChanged" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var batch in _batches)
+                        {
+                            <MudSelectItem T="Guid?" Value="@batch.Id">@batch.BatchNumber - @batch.Breed</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="Guid?" Label="Bird color" @bind-Value="_form.BatchVariantId" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var variant in SelectedVariants)
+                        {
+                            <MudSelectItem T="Guid?" Value="@variant.Id">@DisplayColor(variant.Color)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudTextField @bind-Value="_form.MedicationName" Label="Medication / vaccine name" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudTextField @bind-Value="_form.MedicationType" Label="Type of medicine" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudDatePicker @bind-Date="_formDate" Label="@(_formTab == 0 ? "Medication date" : "Schedule date")" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudTextField @bind-Value="_form.Purpose" Label="Purpose" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudTextField @bind-Value="_form.Dosage" Label="Dosage" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudTextField @bind-Value="_form.Notes" Label="Notes" Variant="Variant.Outlined" Margin="Margin.Dense" Lines="3" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" Disabled="_saving" OnClick="SaveAsync">
+                        @(_formTab == 0 ? "Record Medication" : "Schedule Medication")
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="7">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudTabs ActivePanelIndex="_tableTab" ActivePanelIndexChanged="OnTableTabChanged" Rounded="true" Elevation="0">
+                    <MudTabPanel Text="Daily records" Icon="@Icons.Material.Filled.DoneAll" />
+                    <MudTabPanel Text="Schedule records" Icon="@Icons.Material.Filled.EventAvailable" />
+                </MudTabs>
+
+                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading" Class="mt-3">
+                    <HeaderContent>
+                        <MudTh>Date</MudTh>
+                        <MudTh>Batch</MudTh>
+                        <MudTh>Medicine</MudTh>
+                        <MudTh>Purpose</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
+                        <MudTd>@context.BatchNumber</MudTd>
+                        <MudTd>
+                            <MudText Typo="Typo.body2" Class="font-semibold">@context.MedicationName</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.MedicationType - @context.Dosage</MudText>
+                        </MudTd>
+                        <MudTd>@context.Purpose</MudTd>
+                        <MudTd><MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Status)" Variant="Variant.Outlined">@StatusText(context.Status)</MudChip></MudTd>
+                        <MudTd>
+                            @if (context.Status != 1)
+                            {
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.TaskAlt" OnClick="@(() => CompleteAsync(context.Id))">Mark as complete</MudMenuItem>
+                                </MudMenu>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <EmptyState Icon="@Icons.Material.Filled.Medication" Title="No medication records" Description="Create a medication schedule or daily treatment record." />
+                    </NoRecordsContent>
+                </MudTable>
+                <MudPagination Count="@TotalPages" Selected="_page" SelectedChanged="ChangePageAsync" Class="mt-3" />
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</ModulePageShell>
+
+@code {
+    private MedicationForm _form = new();
+    private MedicationMetrics _metrics = new();
+    private List<BatchOption> _batches = [];
+    private List<MedicationRow> _records = [];
+    private Guid? _selectedBatchId;
+    private DateTime? _formDate = DateTime.Today;
+    private int _formTab;
+    private int _tableTab = 1;
+    private int _page = 1;
+    private const int PageSize = 10;
+    private int _total;
+    private bool _loading;
+    private bool _saving;
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+    private IEnumerable<BatchVariantOption> SelectedVariants => _batches.FirstOrDefault(x => x.Id == _selectedBatchId)?.Variants ?? [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", true);
+            return;
+        }
+        await LoadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var client = CreateApiClient();
+            _batches = await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [];
+            _metrics = await client.GetFromJsonAsync<MedicationMetrics>("/api/medication/metrics") ?? new();
+            var type = _tableTab == 0 ? "daily" : "schedule";
+            var response = await client.GetFromJsonAsync<PagedMedicationResponse>($"/api/medication?type={type}&page={_page}&pageSize={PageSize}");
+            _records = response?.Items ?? [];
+            _total = response?.Total ?? 0;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Medication could not load: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task OnBatchChanged(Guid? batchId)
+    {
+        _selectedBatchId = batchId;
+        _form.BatchVariantId = SelectedVariants.FirstOrDefault()?.Id;
+        return Task.CompletedTask;
+    }
+
+    private async Task OnTableTabChanged(int index)
+    {
+        _tableTab = index;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_form.BatchVariantId is null || _formDate is null || string.IsNullOrWhiteSpace(_form.MedicationName))
+        {
+            Snackbar.Add("Batch color, medication name, and date are required.", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var payload = new
+            {
+                _form.BatchVariantId,
+                _form.MedicationName,
+                Date = DateOnly.FromDateTime(_formDate.Value),
+                _form.Purpose,
+                _form.MedicationType,
+                _form.Dosage,
+                _form.Frequency,
+                _form.Notes,
+                IsDailyRecord = _formTab == 0
+            };
+            var response = await CreateApiClient().PostAsJsonAsync("/api/medication", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Medication could not be saved."), Severity.Error);
+                return;
+            }
+            Snackbar.Add(_formTab == 0 ? "Medication recorded." : "Medication scheduled.", Severity.Success);
+            _form = new();
+            _selectedBatchId = null;
+            _formDate = DateTime.Today;
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CompleteAsync(Guid id)
+    {
+        var response = await CreateApiClient().PostAsync($"/api/medication/{id}/complete", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Medication could not be completed."), Severity.Error);
+            return;
+        }
+        Snackbar.Add("Medication marked as complete.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task ChangePageAsync(int page)
+    {
+        _page = page;
+        await LoadAsync();
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static string DisplayColor(int value) => value switch { 0 => "White", 1 => "Brown", 2 => "Black", 3 => "Speckled", _ => "Mixed" };
+    private static string StatusText(int value) => value switch { 1 => "Completed", 2 => "Overdue", _ => "Scheduled" };
+    private static Color StatusColor(int value) => value switch { 1 => Color.Success, 2 => Color.Error, _ => Color.Warning };
+
+    private sealed record MedicationMetrics(int Scheduled = 0, int Completed = 0, int Alerts = 0);
+    private sealed record PagedMedicationResponse(List<MedicationRow> Items, int Total, int Page, int PageSize);
+    private sealed record MedicationRow(Guid Id, Guid BatchId, string BatchNumber, Guid BatchVariantId, int BirdColor, string MedicationName, string MedicationType, DateOnly Date, string Purpose, string Dosage, string Frequency, int Status, DateOnly? CompletedDate, string? Notes);
+    private sealed record BatchOption(Guid Id, string BatchNumber, int BirdType, DateOnly ArrivalDate, string Breed, string? Supplier, DateOnly ExpectedSaleDate, int Status, int InitialCount, int CurrentCount, decimal SurvivalRate, List<BatchVariantOption> Variants);
+    private sealed record BatchVariantOption(Guid Id, int Color, int EggColor, int InitialCount, int CurrentCount, string? Notes);
+    private sealed class MedicationForm
+    {
+        public Guid? BatchVariantId { get; set; }
+        public string MedicationName { get; set; } = string.Empty;
+        public string MedicationType { get; set; } = string.Empty;
+        public string Purpose { get; set; } = string.Empty;
+        public string Dosage { get; set; } = string.Empty;
+        public string? Frequency { get; set; }
+        public string? Notes { get; set; }
+    }
+}

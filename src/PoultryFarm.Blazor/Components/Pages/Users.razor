@@ -1,0 +1,402 @@
+@page "/users"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Shared
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Users & Roles</PageTitle>
+
+@if (!_loaded)
+{
+    <PageLoader Message="Loading farm users..." />
+}
+else if (!CanManageWorkers)
+{
+    <ModulePageShell Title="Users & Roles" Subtitle="This workspace is available to farm admins and system admins.">
+        <ModuleStatusPanel Title="Restricted workspace" Description="Worker access is managed by farm administrators." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Users & Roles" Subtitle="@UserPageSubtitle">
+        <MudGrid Spacing="3">
+            <MudItem xs="12" lg="4">
+                <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
+                    <MudStack Spacing="2">
+                        <MudText Typo="Typo.h6">@(_editingUser is null ? "Create User Access" : "Update User Access")</MudText>
+                        @if (AuthSession.IsSystemAdmin)
+                        {
+                            <MudSelect T="Guid?" @bind-Value="_userForm.CompanyId" Label="Company" Variant="Variant.Outlined">
+                                @foreach (var company in _companies)
+                                {
+                                    <MudSelectItem T="Guid?" Value="@company.Id">@company.Name (@company.Code)</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudSelect T="string" @bind-Value="_userForm.Role" Label="Role" Variant="Variant.Outlined">
+                                <MudSelectItem T="string" Value="@("farm_admin")">Farm Admin</MudSelectItem>
+                                <MudSelectItem T="string" Value="@("worker")">Worker</MudSelectItem>
+                            </MudSelect>
+                        }
+                        else
+                        {
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                                Farm admins and workers will be assigned to @AuthSession.WorkspaceTitle.
+                            </MudAlert>
+                            <MudSelect T="string" @bind-Value="_userForm.Role" Label="Role" Variant="Variant.Outlined">
+                                <MudSelectItem T="string" Value="@("farm_admin")">Farm Admin</MudSelectItem>
+                                <MudSelectItem T="string" Value="@("worker")">Worker</MudSelectItem>
+                            </MudSelect>
+                        }
+                        <MudTextField @bind-Value="_userForm.Username" Label="Username" Variant="Variant.Outlined" />
+                        <MudTextField @bind-Value="_userForm.FirstName" Label="First name" Variant="Variant.Outlined" />
+                        <MudTextField @bind-Value="_userForm.LastName" Label="Last name" Variant="Variant.Outlined" />
+                        <MudTextField @bind-Value="_userForm.Email" Label="Email" Variant="Variant.Outlined" />
+                        @if (_editingUser is null)
+                        {
+                            <MudTextField @bind-Value="_userForm.Password"
+                                          Label="Temporary password"
+                                          Variant="Variant.Outlined"
+                                          InputType="@(_showPassword ? InputType.Text : InputType.Password)"
+                                          Adornment="Adornment.End"
+                                          AdornmentIcon="@(_showPassword ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
+                                          OnAdornmentClick="@(() => _showPassword = !_showPassword)" />
+                        }
+                        else
+                        {
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                                Updating @(_editingUser.Username). Password reset will be added separately.
+                            </MudAlert>
+                        }
+                        <MudStack Row="true" Spacing="2">
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Success"
+                                       StartIcon="@(_editingUser is null ? Icons.Material.Filled.PersonAdd : Icons.Material.Filled.Save)"
+                                       Disabled="_savingUser"
+                                       OnClick="SaveUserAsync">
+                                @(_savingUser ? "Saving..." : _editingUser is null ? CreateButtonText : "Update User")
+                            </MudButton>
+                            @if (_editingUser is not null)
+                            {
+                                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="CancelEdit">
+                                    Cancel
+                                </MudButton>
+                            }
+                        </MudStack>
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" lg="8">
+                <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
+                    <MudText Typo="Typo.h6" Class="mb-3">User Access</MudText>
+                    <MudTable Items="VisibleUsers" Dense="true" Hover="true" RowsPerPage="10">
+                        <HeaderContent>
+                            <MudTh>Name</MudTh>
+                            <MudTh>Username</MudTh>
+                            <MudTh>Company</MudTh>
+                            <MudTh>Role</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Password</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Name">@UserFullName(context)</MudTd>
+                            <MudTd DataLabel="Username">@context.Username</MudTd>
+                            <MudTd DataLabel="Company">@(context.CompanyName ?? "System")</MudTd>
+                            <MudTd DataLabel="Role">
+                                <MudChip T="string" Size="Size.Small" Color="@RoleColor(context.Role)" Variant="Variant.Outlined">
+                                    @DisplayRole(context.Role)
+                                </MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="Status">
+                                <MudChip T="string" Size="Size.Small" Color="@(context.IsActive ? Color.Success : Color.Error)" Variant="Variant.Outlined">
+                                    @(context.IsActive ? "Active" : "Blocked")
+                                </MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="Password">@(context.MustChangePassword ? "Must change" : "Changed")</MudTd>
+                            <MudTd>
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => BeginEdit(context))">Edit</MudMenuItem>
+                                    @if (context.IsActive)
+                                    {
+                                        <MudMenuItem Icon="@Icons.Material.Filled.Block" OnClick="@(() => ToggleStatusAsync(context))">Block</MudMenuItem>
+                                    }
+                                    else
+                                    {
+                                        <MudMenuItem Icon="@Icons.Material.Filled.CheckCircle" OnClick="@(() => ToggleStatusAsync(context))">Activate</MudMenuItem>
+                                    }
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteUserAsync(context))">Delete</MudMenuItem>
+                                </MudMenu>
+                            </MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">No farm admin or worker accounts found.</MudText>
+                        </NoRecordsContent>
+                        <PagerContent>
+                            <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                        </PagerContent>
+                    </MudTable>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </ModulePageShell>
+}
+
+@code {
+    private CreateManagedUserModel _userForm = new() { Role = "worker" };
+    private ManagedUser? _editingUser;
+    private List<ManagedCompany> _companies = [];
+    private List<ManagedUser> _users = [];
+    private bool _loaded;
+    private bool _savingUser;
+    private bool _showPassword;
+
+    private bool CanManageWorkers => AuthSession.IsSystemAdmin || AuthSession.IsFarmAdmin;
+
+    private string UserPageSubtitle =>
+        AuthSession.IsSystemAdmin
+            ? "Create farm admin or worker accounts for any company."
+            : $"Create farm admin and worker accounts for {AuthSession.WorkspaceTitle}.";
+
+    private string CreateButtonText =>
+        _userForm.Role == "farm_admin" ? "Create Farm Admin" : "Create Worker";
+
+    private IEnumerable<ManagedUser> VisibleUsers =>
+        _users
+            .Where(x => AuthSession.IsSystemAdmin
+                ? x.Role == "worker" || x.Role == "farm_admin"
+                : x.Role == "worker" || x.Role == "farm_admin")
+            .OrderBy(x => x.CompanyName)
+            .ThenBy(x => x.Role)
+            .ThenBy(x => x.FirstName)
+            .ThenBy(x => x.Username);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await AuthSession.LoadAsync();
+
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (AuthSession.MustChangePassword)
+        {
+            Navigation.NavigateTo("/force-password-change", replace: true);
+            return;
+        }
+
+        if (CanManageWorkers)
+        {
+            await LoadAsync();
+        }
+
+        _loaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        var client = CreateApiClient();
+        try
+        {
+            _users = await client.GetFromJsonAsync<List<ManagedUser>>("/api/users") ?? [];
+
+            if (AuthSession.IsSystemAdmin)
+            {
+                _companies = await client.GetFromJsonAsync<List<ManagedCompany>>("/api/companies") ?? [];
+                if (_userForm.CompanyId is null || _userForm.CompanyId == Guid.Empty)
+                {
+                    _userForm.CompanyId = _companies.FirstOrDefault()?.Id;
+                }
+            }
+            else
+            {
+                _userForm.Role = string.IsNullOrWhiteSpace(_userForm.Role) ? "worker" : _userForm.Role;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "Users could not be loaded.", client.BaseAddress), Severity.Error);
+        }
+    }
+
+    private async Task SaveUserAsync()
+    {
+        if (AuthSession.IsSystemAdmin && (_userForm.CompanyId is null || _userForm.CompanyId == Guid.Empty))
+        {
+            Snackbar.Add("Select the company this user belongs to.", Severity.Error);
+            return;
+        }
+
+        if (_editingUser is null && (string.IsNullOrWhiteSpace(_userForm.Username) || string.IsNullOrWhiteSpace(_userForm.Password)))
+        {
+            Snackbar.Add("Username and temporary password are required.", Severity.Error);
+            return;
+        }
+
+        _savingUser = true;
+
+        try
+        {
+            var client = CreateApiClient();
+            HttpResponseMessage response;
+
+            if (_editingUser is null)
+            {
+                response = await client.PostAsJsonAsync("/api/users", _userForm);
+            }
+            else
+            {
+                var update = new UpdateManagedUserModel
+                {
+                    CompanyId = _userForm.CompanyId,
+                    Role = _userForm.Role,
+                    Username = _userForm.Username,
+                    FirstName = _userForm.FirstName,
+                    LastName = _userForm.LastName,
+                    Email = _userForm.Email
+                };
+
+                response = await client.PutAsJsonAsync($"/api/users/{_editingUser.Id}", update);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "User could not be created."), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(_editingUser is null ? $"{DisplayRole(_userForm.Role)} access created successfully." : "User updated successfully.", Severity.Success);
+            var selectedCompany = _userForm.CompanyId;
+            var selectedRole = _userForm.Role;
+            _editingUser = null;
+            _userForm = new CreateManagedUserModel { CompanyId = selectedCompany, Role = selectedRole };
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "User could not be saved.", CreateApiClient().BaseAddress), Severity.Error);
+        }
+        finally
+        {
+            _savingUser = false;
+        }
+    }
+
+    private void BeginEdit(ManagedUser user)
+    {
+        _editingUser = user;
+        _userForm = new CreateManagedUserModel
+        {
+            CompanyId = user.CompanyId,
+            Role = user.Role,
+            Username = user.Username,
+            FirstName = user.FirstName ?? string.Empty,
+            LastName = user.LastName ?? string.Empty,
+            Email = user.Email
+        };
+    }
+
+    private void CancelEdit()
+    {
+        var selectedCompany = _userForm.CompanyId;
+        _editingUser = null;
+        _userForm = new CreateManagedUserModel
+        {
+            CompanyId = AuthSession.IsSystemAdmin ? selectedCompany : null,
+            Role = "worker"
+        };
+    }
+
+    private async Task ToggleStatusAsync(ManagedUser user)
+    {
+        try
+        {
+            var client = CreateApiClient();
+            var action = user.IsActive ? "block" : "activate";
+            var response = await client.PostAsync($"/api/users/{user.Id}/{action}", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "User status could not be updated."), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(user.IsActive ? "User blocked." : "User activated.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "User status could not be updated.", CreateApiClient().BaseAddress), Severity.Error);
+        }
+    }
+
+    private async Task DeleteUserAsync(ManagedUser user)
+    {
+        try
+        {
+            var client = CreateApiClient();
+            var response = await client.DeleteAsync($"/api/users/{user.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "User could not be deleted."), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("User deleted successfully.", Severity.Success);
+            if (_editingUser?.Id == user.Id)
+            {
+                CancelEdit();
+            }
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "User could not be deleted.", CreateApiClient().BaseAddress), Severity.Error);
+        }
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static string UserFullName(ManagedUser user)
+    {
+        var fullName = $"{user.FirstName} {user.LastName}".Trim();
+        return string.IsNullOrWhiteSpace(fullName) ? user.Username : fullName;
+    }
+
+    private static string DisplayRole(string role) =>
+        role switch
+        {
+            "super_admin" => "Super Admin",
+            "sub_admin" => "Sub Admin",
+            "farm_admin" => "Farm Admin",
+            "worker" => "Worker",
+            _ => role
+        };
+
+    private static Color RoleColor(string role) =>
+        role switch
+        {
+            "farm_admin" => Color.Success,
+            "worker" => Color.Info,
+            _ => Color.Default
+        };
+}

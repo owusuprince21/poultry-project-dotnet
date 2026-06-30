@@ -1,0 +1,169 @@
+@page "/audit-logs"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using PoultryFarm.Blazor.Components.UI.Shared
+@using PoultryFarm.Blazor.Services
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Audit Logs</PageTitle>
+
+@if (!_loaded)
+{
+    <PageLoader Message="Loading audit trail..." />
+}
+else if (!AuthSession.IsSuperAdmin)
+{
+    <ModulePageShell Title="Audit Logs" Subtitle="This workspace is available to super admins only.">
+        <ModuleStatusPanel Title="Restricted workspace" Description="Audit trail review is reserved for super administrators." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Audit Logs" Subtitle="Trace operational and security-sensitive actions.">
+        <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                <div>
+                    <MudText Typo="Typo.h6">Enterprise Audit Trail</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Track company and user management actions with actor, target, and tenant context.</MudText>
+                </div>
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                    <MudDatePicker @bind-Date="_fromDate" Label="From" Variant="Variant.Outlined" />
+                    <MudDatePicker @bind-Date="_toDate" Label="To" Variant="Variant.Outlined" />
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.FilterAlt" OnClick="LoadAsync">Apply</MudButton>
+                    <MudIconButton Icon="@Icons.Material.Filled.Clear" Color="Color.Default" OnClick="ClearFiltersAsync" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Primary" OnClick="LoadAsync" />
+                </MudStack>
+            </MudStack>
+
+            <MudTable Items="_logs" Dense="true" Hover="true" RowsPerPage="10">
+                <HeaderContent>
+                    <MudTh>Timestamp</MudTh>
+                    <MudTh>Event</MudTh>
+                    <MudTh>Actor</MudTh>
+                    <MudTh>Target</MudTh>
+                    <MudTh>Company</MudTh>
+                    <MudTh>Category</MudTh>
+                    <MudTh>Detail</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Timestamp">@context.Timestamp.LocalDateTime.ToString("MMM d, yyyy h:mm tt")</MudTd>
+                    <MudTd DataLabel="Event">@context.Event</MudTd>
+                    <MudTd DataLabel="Actor">
+                        <MudText Typo="Typo.body2">@context.Actor</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Role</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Target">@context.Target</MudTd>
+                    <MudTd DataLabel="Company">@(context.CompanyName ?? "Platform")</MudTd>
+                    <MudTd DataLabel="Category">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@CategoryColor(context.Category)">
+                            @context.Category
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Detail">@context.Detail</MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">No audit entries found.</MudText>
+                </NoRecordsContent>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudTable>
+        </MudPaper>
+    </ModulePageShell>
+}
+
+@code {
+    private List<AuditLogEntry> _logs = [];
+    private bool _loaded;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (AuthSession.MustChangePassword)
+        {
+            Navigation.NavigateTo("/force-password-change", replace: true);
+            return;
+        }
+
+        if (AuthSession.IsSuperAdmin)
+        {
+            await LoadAsync();
+        }
+
+        _loaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _logs = await CreateApiClient().GetFromJsonAsync<List<AuditLogEntry>>($"/api/platform/audit-logs{DateQuery}") ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Audit logs error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static Color CategoryColor(string category) =>
+        category switch
+        {
+            "Company" => Color.Primary,
+            "System User" => Color.Info,
+            "Identity" => Color.Success,
+            _ => Color.Default
+        };
+
+    private async Task ClearFiltersAsync()
+    {
+        _fromDate = null;
+        _toDate = null;
+        await LoadAsync();
+    }
+
+    private string DateQuery
+    {
+        get
+        {
+            var values = new List<string>();
+            if (_fromDate.HasValue)
+            {
+                values.Add($"from={Uri.EscapeDataString(new DateTimeOffset(_fromDate.Value.Date).ToString("O"))}");
+            }
+
+            if (_toDate.HasValue)
+            {
+                values.Add($"to={Uri.EscapeDataString(new DateTimeOffset(_toDate.Value.Date.AddDays(1).AddTicks(-1)).ToString("O"))}");
+            }
+
+            return values.Count == 0 ? string.Empty : "?" + string.Join("&", values);
+        }
+    }
+}

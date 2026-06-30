@@ -1,0 +1,240 @@
+@page "/"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@layout PoultryFarm.Blazor.Components.Layout.AuthLayout
+
+@using System.Net.Http.Json
+@using System.Text.Json
+@using MudBlazor
+@using PoultryFarm.Blazor.Services
+
+@inject IHttpClientFactory HttpClientFactory
+@inject AuthSession AuthSession
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Login</PageTitle>
+
+<main class="login-page">
+    <section class="login-visual">
+        <div class="login-shade">
+
+            <MudText Typo="Typo.h3" Class="login-title">
+                Poultry Farm Management System
+            </MudText>
+
+            <MudText Typo="Typo.subtitle1" Class="login-copy">
+                Production, feed, sales, bird health, and operational governance in one secure workspace.
+            </MudText>
+        </div>
+    </section>
+
+    <section class="login-panel">
+        <MudPaper Class="login-card" Elevation="0">
+            <MudText Typo="Typo.h4" Class="font-bold">
+                Sign in
+            </MudText>
+
+            <MudText Typo="Typo.body2" Color="Color.Primary">
+                Use your farm account to continue to the RBAC dashboard.
+            </MudText>
+
+            <MudForm Class="login-form">
+                <MudTextField @bind-Value="_username"
+                              Label="Username"
+                              Variant="Variant.Outlined"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Person"
+                              autocomplete="username"
+                              Immediate="true" />
+
+                <MudTextField @bind-Value="_password"
+                              Label="Password"
+                              Variant="Variant.Outlined"
+                              InputType="@PasswordInputType"
+                              Adornment="Adornment.End"
+                              AdornmentIcon="@PasswordIcon"
+                              OnAdornmentClick="@TogglePasswordVisibility"
+                              autocomplete="current-password"
+                              Immediate="true" />
+
+                @if (_requires2Fa)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                        Enter the 6-digit authentication code for @_twoFactorUsername.
+                    </MudAlert>
+                    <MudStack Row="true" Spacing="1" Justify="Justify.Center" Class="two-factor-code">
+                        <MudTextField @bind-Value="_code1" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+                        <MudTextField @bind-Value="_code2" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+                        <MudTextField @bind-Value="_code3" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+                        <MudTextField @bind-Value="_code4" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+                        <MudTextField @bind-Value="_code5" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+                        <MudTextField @bind-Value="_code6" MaxLength="1" Variant="Variant.Outlined" Class="two-factor-box" Immediate="true" />
+                    </MudStack>
+                }
+
+                <MudButton ButtonType="ButtonType.Button"
+                           OnClick="@Submit"
+                           Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           FullWidth="true"
+                           Disabled="@_busy"
+                           Class="login-button">
+                    @(_busy ? "Signing in..." : _requires2Fa ? "Verify code" : "Sign in")
+                </MudButton>
+            </MudForm>
+
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
+                Development users:
+                <strong>admin</strong>, <strong>farmadmin</strong>, <strong>worker</strong>.
+            </MudAlert>
+        </MudPaper>
+    </section>
+</main>
+
+@code {
+    private string _username = string.Empty;
+    private string _password = string.Empty;
+    private bool _busy;
+    private bool _showPassword;
+    private bool _requires2Fa;
+    private string? _twoFactorUsername;
+    private string _code1 = string.Empty;
+    private string _code2 = string.Empty;
+    private string _code3 = string.Empty;
+    private string _code4 = string.Empty;
+    private string _code5 = string.Empty;
+    private string _code6 = string.Empty;
+
+    private InputType PasswordInputType => _showPassword ? InputType.Text : InputType.Password;
+    private string PasswordIcon => _showPassword ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility;
+
+    private void TogglePasswordVisibility()
+    {
+        _showPassword = !_showPassword;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await AuthSession.LoadAsync();
+
+        if (AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/dashboard", replace: true);
+            return;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task Submit()
+    {
+        if (_busy)
+        {
+            Snackbar.Add("Login is already processing.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_username))
+        {
+            Snackbar.Add("Username is required.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_password))
+        {
+            Snackbar.Add("Password is required.", Severity.Warning);
+            return;
+        }
+
+        _busy = true;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+
+            var endpoint = _requires2Fa ? "/api/auth/2fa/verify" : "/api/auth/login";
+            var response = await client.PostAsJsonAsync(endpoint, new
+            {
+                username = _username.Trim(),
+                password = _password,
+                code = TwoFactorCode
+            });
+
+            var rawResponse = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(rawResponse, "Login failed. Please check your credentials."), Severity.Error);
+                return;
+            }
+
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            var login = JsonSerializer.Deserialize<LoginResponse>(rawResponse, options);
+
+            if (login is null)
+            {
+                Snackbar.Add("Login response could not be read.", Severity.Error);
+                return;
+            }
+
+            if (login.Requires2Fa)
+            {
+                _requires2Fa = true;
+                _twoFactorUsername = login.Username ?? _username.Trim();
+                Snackbar.Add("Two-factor verification is required.", Severity.Warning);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(login.Token) || login.User is null)
+            {
+                Snackbar.Add("Login response is missing token or user details.", Severity.Error);
+                return;
+            }
+
+            await AuthSession.SignInAsync(login.Token, login.User);
+
+            if (!AuthSession.IsAuthenticated)
+            {
+                Snackbar.Add("Login succeeded, but session was not saved.", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Login successful", Severity.Success);
+
+            await Task.Delay(300);
+
+            Navigation.NavigateTo(AuthSession.MustChangePassword ? "/force-password-change" : "/dashboard", replace: true);
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.WriteLine(ex);
+            Snackbar.Add($"API connection error: {ex.Message}", Severity.Error);
+        }
+        catch (JsonException ex)
+        {
+            Console.WriteLine(ex);
+            Snackbar.Add($"Invalid API response format: {ex.Message}", Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+            Snackbar.Add($"Login error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private string TwoFactorCode =>
+        string.Concat(_code1, _code2, _code3, _code4, _code5, _code6).Trim();
+}

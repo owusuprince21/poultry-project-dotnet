@@ -1,0 +1,12 @@
+@page "/team-chat"
+
+@using PoultryFarm.Blazor.Components.UI.Chat
+@using PoultryFarm.Blazor.Components.UI.Shared
+
+<PageTitle>Team Chat</PageTitle>
+
+<ModulePageShell Title="Team Chat" Subtitle="Role-scoped messaging for escalation and farm collaboration.">
+    <MudPaper Elevation="0" Class="pa-0 rounded-lg border border-slate-200 overflow-hidden">
+        <TeamChatWorkspace />
+    </MudPaper>
+</ModulePageShell>

@@ -1,0 +1,314 @@
+@page "/batches"
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using PoultryFarm.Blazor.Components.UI.Shared
+@using PoultryFarm.Blazor.Services
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Batch Management</PageTitle>
+
+<ModulePageShell Title="Batch Management" Subtitle="Track flock placement, survival, growth age, and expected sale readiness.">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Active Batches" Value="@ActiveBatches.Count.ToString("N0")" Detail="currently being managed" Icon="@Icons.Material.Filled.Inventory2" Color="Color.Primary" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Active Birds" Value="@ActiveBatches.Sum(x => x.CurrentCount).ToString("N0")" Detail="available bird count" Icon="@Icons.Material.Filled.Pets" Color="Color.Success" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Ready Soon" Value="@ActiveBatches.Count(x => DaysToSale(x) <= 14).ToString("N0")" Detail="within 14 days of sale date" Icon="@Icons.Material.Filled.EventAvailable" Color="Color.Warning" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Avg Survival" Value="@AverageSurvival" Detail="current birds vs placement" Icon="@Icons.Material.Filled.HealthAndSafety" Color="Color.Info" />
+        </MudItem>
+    </MudGrid>
+
+    <MudGrid Spacing="3" Class="mt-4">
+        <MudItem xs="12" lg="4">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudText Typo="Typo.h6" Class="font-semibold">Create Batch</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">Set placement date and expected sale date. The dashboard will track age and readiness automatically.</MudText>
+
+                <MudStack Spacing="3">
+                    <MudSelect T="int" @bind-Value="_form.BirdType" Label="Bird type" Variant="Variant.Outlined">
+                        <MudSelectItem Value="0">Layer</MudSelectItem>
+                        <MudSelectItem Value="1">Broiler</MudSelectItem>
+                    </MudSelect>
+                    <MudTextField @bind-Value="_form.Breed" Label="Breed" Variant="Variant.Outlined" />
+                    <MudTextField @bind-Value="_form.Supplier" Label="Supplier" Variant="Variant.Outlined" />
+                    <MudDatePicker @bind-Date="_form.ArrivalDate" Label="Placement / arrival date" Variant="Variant.Outlined" />
+                    <MudDatePicker @bind-Date="_form.ExpectedSaleDate" Label="Expected sale date" Variant="Variant.Outlined" />
+                    <MudSelect T="int" @bind-Value="_form.Color" Label="Variant color" Variant="Variant.Outlined">
+                        <MudSelectItem Value="0">White</MudSelectItem>
+                        <MudSelectItem Value="1">Brown</MudSelectItem>
+                        <MudSelectItem Value="2">Black</MudSelectItem>
+                        <MudSelectItem Value="3">Speckled</MudSelectItem>
+                        <MudSelectItem Value="4">Mixed</MudSelectItem>
+                    </MudSelect>
+                    <MudNumericField @bind-Value="_form.InitialCount" Label="Initial birds" Variant="Variant.Outlined" Min="1" />
+                    <MudTextField @bind-Value="_form.Notes" Label="Notes" Variant="Variant.Outlined" Lines="3" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Disabled="@_saving" OnClick="CreateBatchAsync">
+                        Create Batch
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="8">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <div>
+                        <MudText Typo="Typo.h6" Class="font-semibold">Batch Readiness</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">From placement day to expected sale day, with survival and variant counts.</MudText>
+                    </div>
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync">Refresh</MudButton>
+                </MudStack>
+
+                <MudTable Items="@_batches" Dense="true" Hover="true" Loading="@_loading" RowsPerPage="10">
+                    <HeaderContent>
+                        <MudTh>Batch</MudTh>
+                        <MudTh>Breed</MudTh>
+                        <MudTh>Age</MudTh>
+                        <MudTh>Birds</MudTh>
+                        <MudTh>Survival</MudTh>
+                        <MudTh>Sale Date</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Batch">
+                            <MudText Typo="Typo.body2" Class="font-semibold">@context.BatchNumber</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@DisplayBirdType(context.BirdType)</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Breed">@context.Breed</MudTd>
+                        <MudTd DataLabel="Age">@AgeInWeeks(context) weeks</MudTd>
+                        <MudTd DataLabel="Birds">@context.CurrentCount.ToString("N0") / @context.InitialCount.ToString("N0")</MudTd>
+                        <MudTd DataLabel="Survival">@context.SurvivalRate.ToString("N1")%</MudTd>
+                        <MudTd DataLabel="Sale Date">@context.ExpectedSaleDate.ToString("MMM d, yyyy")</MudTd>
+                        <MudTd DataLabel="Status">
+                            <MudChip T="string" Size="Size.Small" Color="@ReadinessColor(context)" Variant="Variant.Outlined">@ReadinessText(context)</MudChip>
+                        </MudTd>
+                        <MudTd>
+                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                @if (context.Status == 0)
+                                {
+                                    <MudMenuItem Icon="@Icons.Material.Filled.PointOfSale" OnClick="@(() => MarkReadyForSaleAsync(context.Id))">Mark ready for sale</MudMenuItem>
+                                }
+                                <MudMenuItem Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync">Refresh</MudMenuItem>
+                            </MudMenu>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">No batches have been created for this farm yet.</MudText>
+                    </NoRecordsContent>
+                    <PagerContent>
+                        <MudTablePager />
+                    </PagerContent>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</ModulePageShell>
+
+@code {
+    private readonly BatchForm _form = new();
+    private List<BatchModel> _batches = [];
+    private bool _loading;
+    private bool _saving;
+
+    private IReadOnlyCollection<BatchModel> ActiveBatches => _batches.Where(x => x.Status == 0).ToList();
+
+    private string AverageSurvival =>
+        ActiveBatches.Count == 0 ? "0%" : $"{ActiveBatches.Average(x => x.SurvivalRate):N1}%";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await AuthSession.LoadAsync();
+        _form.CompanyId = AuthSession.CompanyId ?? Guid.Empty;
+        await LoadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _batches = await CreateApiClient().GetFromJsonAsync<List<BatchModel>>("/api/batches") ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Batches could not load: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task CreateBatchAsync()
+    {
+        if (_form.CompanyId == Guid.Empty || string.IsNullOrWhiteSpace(_form.Breed) || _form.InitialCount <= 0)
+        {
+            Snackbar.Add("Breed, company, and initial birds are required.", Severity.Warning);
+            return;
+        }
+
+        if (_form.ExpectedSaleDate < _form.ArrivalDate)
+        {
+            Snackbar.Add("Expected sale date cannot be before placement date.", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var response = await CreateApiClient().PostAsJsonAsync("/api/batches", _form.ToRequest());
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Batch could not be created."), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Batch created successfully.", Severity.Success);
+            _form.Reset(AuthSession.CompanyId ?? Guid.Empty);
+            await LoadAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task MarkReadyForSaleAsync(Guid batchId)
+    {
+        var response = await CreateApiClient().PostAsync($"/api/batches/{batchId}/mark-sold", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Batch could not be marked ready for sale."), Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Batch marked ready for bird sales.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static int AgeInWeeks(BatchModel batch)
+    {
+        var days = DateOnly.FromDateTime(DateTime.Today).DayNumber - batch.ArrivalDate.DayNumber;
+        return Math.Max(0, days / 7);
+    }
+
+    private static int DaysToSale(BatchModel batch) =>
+        batch.ExpectedSaleDate.DayNumber - DateOnly.FromDateTime(DateTime.Today).DayNumber;
+
+    private static string ReadinessText(BatchModel batch)
+    {
+        var days = DaysToSale(batch);
+        return days switch
+        {
+            <= 0 => "Ready for sale",
+            <= 14 => $"{days} days left",
+            _ => "Growing"
+        };
+    }
+
+    private static Color ReadinessColor(BatchModel batch)
+    {
+        var days = DaysToSale(batch);
+        return days switch
+        {
+            <= 0 => Color.Success,
+            <= 14 => Color.Warning,
+            _ => Color.Info
+        };
+    }
+
+    private sealed class BatchForm
+    {
+        public Guid CompanyId { get; set; }
+        public int BirdType { get; set; }
+        public string Breed { get; set; } = string.Empty;
+        public string? Supplier { get; set; }
+        public DateTime? ArrivalDate { get; set; } = DateTime.Today;
+        public DateTime? ExpectedSaleDate { get; set; } = DateTime.Today.AddDays(72 * 7);
+        public int Color { get; set; } = 1;
+        public int InitialCount { get; set; } = 1000;
+        public string? Notes { get; set; }
+
+        public object ToRequest() => new
+        {
+            CompanyId,
+            BirdType,
+            ArrivalDate = DateOnly.FromDateTime(ArrivalDate ?? DateTime.Today),
+            Breed,
+            Supplier,
+            ExpectedSaleDate = DateOnly.FromDateTime(ExpectedSaleDate ?? DateTime.Today),
+            Notes,
+            Variants = new[]
+            {
+                new
+                {
+                    Color,
+                    InitialCount,
+                    Notes
+                }
+            }
+        };
+
+        public void Reset(Guid companyId)
+        {
+            CompanyId = companyId;
+            BirdType = 0;
+            Breed = string.Empty;
+            Supplier = null;
+            ArrivalDate = DateTime.Today;
+            ExpectedSaleDate = DateTime.Today.AddDays(72 * 7);
+            Color = 1;
+            InitialCount = 1000;
+            Notes = null;
+        }
+    }
+
+    private sealed record BatchModel(
+        Guid Id,
+        Guid CompanyId,
+        string BatchNumber,
+        int BirdType,
+        DateOnly ArrivalDate,
+        string Breed,
+        string? Supplier,
+        DateOnly ExpectedSaleDate,
+        int Status,
+        int InitialCount,
+        int CurrentCount,
+        decimal SurvivalRate,
+        IReadOnlyCollection<BatchVariantModel> Variants);
+
+    private sealed record BatchVariantModel(
+        Guid Id,
+        int Color,
+        int EggColor,
+        int InitialCount,
+        int CurrentCount,
+        string? Notes);
+
+    private static string DisplayBirdType(int value) =>
+        value == 1 ? "Broiler" : "Layer";
+}

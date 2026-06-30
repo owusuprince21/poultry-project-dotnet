@@ -1,0 +1,41 @@
+@using MudBlazor
+
+<MudPaper Class="work-surface" Elevation="0">
+    <MudText Typo="Typo.h6" Class="font-semibold">
+        @Title
+    </MudText>
+
+    <MudTable Items="@Items" Dense="true" Hover="true">
+        <HeaderContent>
+            <MudTh>Module</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Priority</MudTh>
+        </HeaderContent>
+
+        <RowTemplate>
+            <MudTd DataLabel="Module">
+                @context.Name
+            </MudTd>
+
+            <MudTd DataLabel="Status">
+                <MudChip T="string"
+                         Color="@context.Color"
+                         Size="Size.Small">
+                    @context.Status
+                </MudChip>
+            </MudTd>
+
+            <MudTd DataLabel="Priority">
+                @context.Priority
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    [Parameter]
+    public string Title { get; set; } = "Modules";
+
+    [Parameter]
+    public IReadOnlyCollection<DashboardModuleItem> Items { get; set; } = [];
+}
