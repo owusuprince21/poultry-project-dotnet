@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PoultryFarm.Api.Authorization;
+using PoultryFarm.Api.Services;
 using PoultryFarm.Application.Common.Interfaces;
 using PoultryFarm.Domain.Batches;
 using PoultryFarm.Domain.Common;
@@ -19,12 +20,13 @@ namespace PoultryFarm.Api.Controllers;
 public sealed class FeedController(
     ApplicationDbContext dbContext,
     UserManager<ApplicationUser> userManager,
-    IActivityNotifier activityNotifier) : ControllerBase
+    IActivityNotifier activityNotifier,
+    ControllerAudit audit) : ControllerBase
 {
     [HttpGet("options")]
-    public async Task<ActionResult<FeedOptionsDto>> Options(CancellationToken cancellationToken)
+    public async Task<ActionResult<FeedOptionsDto>> Options([FromQuery] Guid? company, CancellationToken cancellationToken)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(company, cancellationToken);
         if (scope.Blocked)
         {
             return Forbid();
@@ -63,13 +65,18 @@ public sealed class FeedController(
     [HttpPost("configurations")]
     public async Task<ActionResult<FeedConfigurationDto>> CreateConfiguration(FeedConfigurationRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
             return Unauthorized(new { detail = "User account was not found." });
         }
 
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(null, cancellationToken);
         if (scope.Blocked || !scope.CompanyId.HasValue)
         {
             return Forbid();
@@ -96,12 +103,18 @@ public sealed class FeedController(
 
         dbContext.FeedConfigurations.Add(config);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await WriteFeedAuditAsync("Create", "FeedConfiguration", config.Name, $"Created feed configuration {config.Name}.", config.Id, config.CompanyId, cancellationToken);
         return Ok(ToConfigDto(config));
     }
 
     [HttpPut("configurations/{id:guid}")]
     public async Task<ActionResult<FeedConfigurationDto>> UpdateConfiguration(Guid id, FeedConfigurationRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
@@ -129,12 +142,18 @@ public sealed class FeedController(
         config.IsActive = request.IsActive;
         config.UpdatedByUserId = user.Id;
         await dbContext.SaveChangesAsync(cancellationToken);
+        await WriteFeedAuditAsync("Update", "FeedConfiguration", config.Name, $"Updated feed configuration {config.Name}.", config.Id, config.CompanyId, cancellationToken);
         return Ok(ToConfigDto(config));
     }
 
     [HttpDelete("configurations/{id:guid}")]
     public async Task<IActionResult> DeleteConfiguration(Guid id, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         if (!PermissionHelpers.IsCompanyAdmin(User))
         {
             return Forbid();
@@ -153,13 +172,14 @@ public sealed class FeedController(
 
         config.IsDeleted = true;
         await dbContext.SaveChangesAsync(cancellationToken);
+        await WriteFeedAuditAsync("Delete", "FeedConfiguration", config.Name, $"Deleted feed configuration {config.Name}.", config.Id, config.CompanyId, cancellationToken);
         return NoContent();
     }
 
     [HttpGet("metrics")]
-    public async Task<ActionResult<FeedMetricsDto>> Metrics([FromQuery] Guid? batchId, CancellationToken cancellationToken)
+    public async Task<ActionResult<FeedMetricsDto>> Metrics([FromQuery] Guid? company, [FromQuery] Guid? batchId, CancellationToken cancellationToken)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(company, cancellationToken);
         if (scope.Blocked)
         {
             return Forbid();
@@ -192,9 +212,9 @@ public sealed class FeedController(
     }
 
     [HttpGet("consumptions")]
-    public async Task<ActionResult<PagedFeedConsumptionResponse>> Consumptions([FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken cancellationToken = default)
+    public async Task<ActionResult<PagedFeedConsumptionResponse>> Consumptions([FromQuery] Guid? company, [FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken cancellationToken = default)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(company, cancellationToken);
         if (scope.Blocked)
         {
             return Forbid();
@@ -223,9 +243,9 @@ public sealed class FeedController(
     }
 
     [HttpGet("stocks")]
-    public async Task<ActionResult<PagedFeedStockLotResponse>> StockLots([FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken cancellationToken = default)
+    public async Task<ActionResult<PagedFeedStockLotResponse>> StockLots([FromQuery] Guid? company, [FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken cancellationToken = default)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(company, cancellationToken);
         if (scope.Blocked)
         {
             return Forbid();
@@ -254,6 +274,11 @@ public sealed class FeedController(
     [HttpPost("consumptions")]
     public async Task<ActionResult<FeedConsumptionDto>> CreateConsumption(FeedConsumptionRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
@@ -301,12 +326,18 @@ public sealed class FeedController(
         dbContext.FeedConsumptions.Add(consumption);
         await dbContext.SaveChangesAsync(cancellationToken);
         await NotifyOperationAsync(user, consumption.CompanyId, "Feed usage recorded", $"{DisplayName(user)} recorded {consumption.AmountKg:N1} kg feed usage for batch {variant.Batch.BatchNumber}.", "feed-consumption", consumption.Id, cancellationToken);
+        await WriteFeedAuditAsync("Create", "FeedConsumption", variant.Batch.BatchNumber, $"Recorded {consumption.AmountKg:N1} kg feed usage.", consumption.Id, consumption.CompanyId, cancellationToken);
         return Ok(ToConsumptionDto(consumption));
     }
 
     [HttpPut("consumptions/{id:guid}")]
     public async Task<ActionResult<FeedConsumptionDto>> UpdateConsumption(Guid id, FeedConsumptionRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
@@ -356,12 +387,18 @@ public sealed class FeedController(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         await NotifyOperationAsync(user, consumption.CompanyId, "Feed usage updated", $"{DisplayName(user)} updated a feed usage entry.", "feed-consumption", consumption.Id, cancellationToken);
+        await WriteFeedAuditAsync("Update", "FeedConsumption", consumption.Batch?.BatchNumber ?? consumption.Id.ToString(), "Updated feed consumption entry.", consumption.Id, consumption.CompanyId, cancellationToken);
         return Ok(ToConsumptionDto(consumption));
     }
 
     [HttpDelete("consumptions/{id:guid}")]
     public async Task<IActionResult> DeleteConsumption(Guid id, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
@@ -383,19 +420,25 @@ public sealed class FeedController(
         consumption.IsDeleted = true;
         await dbContext.SaveChangesAsync(cancellationToken);
         await NotifyOperationAsync(user, consumption.CompanyId, "Feed usage deleted", $"{DisplayName(user)} deleted a feed usage entry.", "feed-consumption", consumption.Id, cancellationToken);
+        await WriteFeedAuditAsync("Delete", "FeedConsumption", consumption.Batch?.BatchNumber ?? consumption.Id.ToString(), "Deleted feed consumption entry.", consumption.Id, consumption.CompanyId, cancellationToken);
         return NoContent();
     }
 
     [HttpPost("stocks")]
     public async Task<ActionResult<FeedStockLotDto>> CreateStock(FeedStockLotRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
             return Unauthorized(new { detail = "User account was not found." });
         }
 
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(null, cancellationToken);
         if (scope.Blocked || !scope.CompanyId.HasValue)
         {
             return Forbid();
@@ -431,6 +474,7 @@ public sealed class FeedController(
         dbContext.FeedStockLots.Add(lot);
         await dbContext.SaveChangesAsync(cancellationToken);
         await NotifyOperationAsync(user, lot.CompanyId, "Feed stock received", $"{DisplayName(user)} received {lot.BagsIn:N0} bags of {DisplayFeedType(lot.FeedType)} feed.", "feed-stock", lot.Id, cancellationToken);
+        await WriteFeedAuditAsync("Create", "FeedStock", DisplayFeedType(lot.FeedType), $"Received {lot.BagsIn:N0} bags of feed stock.", lot.Id, lot.CompanyId, cancellationToken);
 
         return Ok(ToStockLotDto(lot));
     }
@@ -438,6 +482,11 @@ public sealed class FeedController(
     [HttpPut("stocks/{id:guid}")]
     public async Task<ActionResult<FeedStockLotDto>> UpdateStock(Guid id, FeedStockLotRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
@@ -481,12 +530,18 @@ public sealed class FeedController(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         await NotifyOperationAsync(user, lot.CompanyId, "Feed stock updated", $"{DisplayName(user)} updated a feed stock entry.", "feed-stock", lot.Id, cancellationToken);
+        await WriteFeedAuditAsync("Update", "FeedStock", DisplayFeedType(lot.FeedType), "Updated feed stock entry.", lot.Id, lot.CompanyId, cancellationToken);
         return Ok(ToStockLotDto(lot));
     }
 
     [HttpDelete("stocks/{id:guid}")]
     public async Task<IActionResult> DeleteStock(Guid id, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
@@ -508,6 +563,7 @@ public sealed class FeedController(
         lot.IsDeleted = true;
         await dbContext.SaveChangesAsync(cancellationToken);
         await NotifyOperationAsync(user, lot.CompanyId, "Feed stock deleted", $"{DisplayName(user)} deleted a feed stock entry.", "feed-stock", lot.Id, cancellationToken);
+        await WriteFeedAuditAsync("Delete", "FeedStock", DisplayFeedType(lot.FeedType), "Deleted feed stock entry.", lot.Id, lot.CompanyId, cancellationToken);
         return NoContent();
     }
 
@@ -596,7 +652,7 @@ public sealed class FeedController(
 
     private async Task<BatchVariant?> GetScopedVariantAsync(Guid variantId, CancellationToken cancellationToken)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(null, cancellationToken);
         if (scope.Blocked)
         {
             return null;
@@ -616,7 +672,7 @@ public sealed class FeedController(
 
     private async Task<FeedConfiguration?> GetScopedFeedConfigurationAsync(Guid feedConfigurationId, CancellationToken cancellationToken)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(null, cancellationToken);
         if (scope.Blocked)
         {
             return null;
@@ -635,21 +691,55 @@ public sealed class FeedController(
 
     private async Task<bool> CanAccessCompanyAsync(Guid companyId, CancellationToken cancellationToken)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(null, cancellationToken);
         return !scope.Blocked && (!scope.CompanyId.HasValue || scope.CompanyId.Value == companyId);
     }
 
-    private async Task<CompanyScope> ResolveCompanyScopeAsync(CancellationToken cancellationToken)
+    private async Task<CompanyScope> ResolveCompanyScopeAsync(Guid? requestedCompany, CancellationToken cancellationToken)
     {
         if (PermissionHelpers.IsSystemAdmin(User))
         {
-            return new CompanyScope(null, false);
+            return new CompanyScope(requestedCompany, false);
         }
 
         var user = await GetCurrentUserAsync();
-        return user?.CompanyId is Guid companyId
-            ? new CompanyScope(companyId, false)
-            : new CompanyScope(null, true);
+        if (user?.CompanyId is not Guid companyId)
+        {
+            return new CompanyScope(null, true);
+        }
+
+        if (requestedCompany.HasValue && requestedCompany.Value != companyId)
+        {
+            return new CompanyScope(null, true);
+        }
+
+        return new CompanyScope(companyId, false);
+    }
+
+    private async Task WriteFeedAuditAsync(
+        string action,
+        string targetType,
+        string targetName,
+        string detail,
+        Guid targetId,
+        Guid companyId,
+        CancellationToken cancellationToken)
+    {
+        var companyName = await dbContext.Companies.AsNoTracking()
+            .Where(x => x.Id == companyId)
+            .Select(x => x.Name)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            action,
+            "Operations",
+            targetType,
+            targetName,
+            detail,
+            targetId,
+            companyId,
+            companyName,
+            cancellationToken: cancellationToken);
     }
 
     private async Task<ApplicationUser?> GetCurrentUserAsync()

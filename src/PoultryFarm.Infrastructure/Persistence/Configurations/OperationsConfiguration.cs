@@ -17,7 +17,6 @@ public sealed class EggProductionConfiguration : IEntityTypeConfiguration<EggPro
         builder.Property(x => x.EggColor).HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.CollectionType).HasConversion<string>().HasMaxLength(20);
         builder.HasIndex(x => new { x.BatchVariantId, x.Date, x.CollectionType, x.EggColor }).IsUnique();
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }
 
@@ -32,7 +31,6 @@ public sealed class FeedStockConfiguration : IEntityTypeConfiguration<FeedStock>
         builder.Property(x => x.MinimumThresholdKg).HasPrecision(12, 2);
         builder.Property(x => x.CostPerKg).HasPrecision(12, 2);
         builder.HasIndex(x => new { x.CompanyId, x.FeedType }).IsUnique();
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }
 
@@ -43,7 +41,6 @@ public sealed class FeedConfigurationConfiguration : IEntityTypeConfiguration<Fe
         builder.ToTable("FeedConfigurations");
         builder.HasQueryFilter(x => !x.IsDeleted);
         builder.Property(x => x.Name).HasMaxLength(120).IsRequired();
-        builder.Property(x => x.RowVersion).IsRowVersion();
         builder.HasIndex(x => new { x.CompanyId, x.Name, x.BagSizeKg }).IsUnique();
     }
 }
@@ -58,7 +55,6 @@ public sealed class FeedStockLotConfiguration : IEntityTypeConfiguration<FeedSto
         builder.Property(x => x.Supplier).HasMaxLength(200);
         builder.Property(x => x.CostPerBag).HasPrecision(12, 2);
         builder.HasIndex(x => new { x.CompanyId, x.FeedType, x.BagSizeKg });
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }
 
@@ -72,7 +68,6 @@ public sealed class FeedConsumptionConfiguration : IEntityTypeConfiguration<Feed
         builder.Property(x => x.AmountKg).HasPrecision(12, 2);
         builder.Property(x => x.CostPerKg).HasPrecision(12, 2);
         builder.Property(x => x.Supplier).HasMaxLength(200);
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }
 
@@ -89,7 +84,6 @@ public sealed class EggSaleConfiguration : IEntityTypeConfiguration<EggSale>
         builder.Property(x => x.PaymentStatus).HasConversion<string>().HasMaxLength(20);
         builder.HasIndex(x => x.ReceiptId).IsUnique();
         builder.HasMany(x => x.Items).WithOne(x => x.EggSale).HasForeignKey(x => x.EggSaleId);
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }
 
@@ -103,7 +97,6 @@ public sealed class EggSaleItemConfiguration : IEntityTypeConfiguration<EggSaleI
         builder.Property(x => x.Size).HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.UnitPrice).HasPrecision(14, 2);
         builder.Property(x => x.LineTotal).HasPrecision(14, 2);
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }
 
@@ -117,7 +110,6 @@ public sealed class BirdSaleConfiguration : IEntityTypeConfiguration<BirdSale>
         builder.Property(x => x.BirdType).HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.PricePerBird).HasPrecision(14, 2);
         builder.Property(x => x.TotalAmount).HasPrecision(14, 2);
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }
 
@@ -130,7 +122,6 @@ public sealed class BirdHealthEventConfiguration : IEntityTypeConfiguration<Bird
         builder.Property(x => x.BirdType).HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.Cause).HasMaxLength(200);
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }
 
@@ -143,7 +134,6 @@ public sealed class MedicationConfiguration : IEntityTypeConfiguration<Medicatio
         builder.Property(x => x.MedicationName).HasMaxLength(200).IsRequired();
         builder.Property(x => x.MedicationType).HasMaxLength(80);
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }
 
@@ -155,6 +145,5 @@ public sealed class DebeakingScheduleConfiguration : IEntityTypeConfiguration<De
         builder.HasQueryFilter(x => !x.IsDeleted);
         builder.Property(x => x.DebeakingType).HasMaxLength(30).IsRequired();
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }

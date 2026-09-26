@@ -1,14 +1,34 @@
 @page "/health"
 @using System.Net.Http.Headers
+@using PoultryFarm.Blazor.Services
 
 @inject AuthSession AuthSession
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
 @inject NavigationManager Navigation
 
 <PageTitle>Bird Health</PageTitle>
 
-<ModulePageShell Title="Bird Health" Subtitle="Record sick birds, mortality, causes, and recovery movement without mixing sickness with actual deaths.">
+<ModulePageShell Title="Bird Health" Subtitle="@PageSubtitle">
+    @if (AuthSession.IsSystemAdmin)
+    {
+        <MudPaper Elevation="0" Class="work-surface pa-4 mb-4">
+            <MudSelect T="Guid?" Label="Farm" Value="_selectedCompanyId" ValueChanged="OnCompanyChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" Clearable="true">
+                @foreach (var company in _companies)
+                {
+                    <MudSelectItem T="Guid?" Value="@company.Id">@company.Name (@company.Code)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudPaper>
+    }
+
+    @if (RequiresFarmSelection && !_selectedCompanyId.HasValue)
+    {
+        <EmptyState Icon="@Icons.Material.Filled.Agriculture" Title="Select a farm" Description="Choose a farm to view bird health metrics and records." />
+    }
+    else
+    {
     <MudGrid Spacing="3">
         <MudItem xs="12" md="6">
             <DashboardMetricCard Label="Sick Birds" Value="@_metrics.SickBirds.ToString("N0")" Detail="active sick bird balance" Icon="@Icons.Material.Filled.HealthAndSafety" Color="Color.Warning" />
@@ -19,6 +39,8 @@
     </MudGrid>
 
     <MudGrid Spacing="3" Class="mt-4">
+        @if (!AuthSession.IsSuperAdmin)
+        {
         <MudItem xs="12" lg="5">
             <MudPaper Elevation="0" Class="work-surface pa-4">
                 <MudTabs @bind-ActivePanelIndex="_formTab" Rounded="true" Elevation="0">
@@ -51,15 +73,21 @@
                 </MudStack>
             </MudPaper>
         </MudItem>
+        }
 
-        <MudItem xs="12" lg="7">
+        <MudItem xs="12" lg="@(AuthSession.IsSuperAdmin ? 12 : 7)">
             <MudPaper Elevation="0" Class="work-surface pa-4">
                 <MudTabs ActivePanelIndex="_tableTab" ActivePanelIndexChanged="OnTableTabChanged" Rounded="true" Elevation="0">
                     <MudTabPanel Text="Sick birds" Icon="@Icons.Material.Filled.Sick" />
                     <MudTabPanel Text="Dead birds" Icon="@Icons.Material.Filled.HeartBroken" />
                 </MudTabs>
 
-                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading" Class="mt-3">
+                <TableExportBar Title="@(_tableTab == 0 ? "Sick birds" : "Dead birds")"
+                                FileName="@(_tableTab == 0 ? "sick-birds" : "dead-birds")"
+                                Disabled="@(!_records.Any())"
+                                GetPayload="BuildExportPayload"
+                                Class="mt-3 mb-2" />
+                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading" RowsPerPage="10">
                     <HeaderContent>
                         <MudTh>Date</MudTh>
                         <MudTh>Batch</MudTh>
@@ -75,9 +103,9 @@
                         <MudTd>@context.Count.ToString("N0")</MudTd>
                         <MudTd>@context.Cause</MudTd>
                         <MudTd>
-                            @if (_tableTab == 0 && context.Count > 0)
+                            @if (!AuthSession.IsSuperAdmin && _tableTab == 0 && context.Count > 0)
                             {
-                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                                     <MudMenuItem Icon="@Icons.Material.Filled.Healing" OnClick="@(() => BeginResolve(context))">Update recovery/death</MudMenuItem>
                                 </MudMenu>
                             }
@@ -90,7 +118,7 @@
                 <MudPagination Count="@TotalPages" Selected="_page" SelectedChanged="ChangePageAsync" Class="mt-3" />
             </MudPaper>
 
-            @if (_resolveTarget is not null)
+            @if (!AuthSession.IsSuperAdmin && _resolveTarget is not null)
             {
                 <MudPaper Elevation="0" Class="work-surface pa-4 mt-3">
                     <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
@@ -110,6 +138,7 @@
             }
         </MudItem>
     </MudGrid>
+    }
 </ModulePageShell>
 
 @code {
@@ -128,6 +157,14 @@
     private int _total;
     private bool _loading;
     private bool _saving;
+    private List<ManagedCompany> _companies = [];
+    private Guid? _selectedCompanyId;
+
+    private bool RequiresFarmSelection => AuthSession.IsSystemAdmin;
+    private string PageSubtitle => AuthSession.IsSuperAdmin
+        ? "Read-only farm overview"
+        : "Record sick birds, mortality, causes, and recovery movement without mixing sickness with actual deaths.";
+    private string CompanyQuery => AuthSession.IsSystemAdmin && _selectedCompanyId.HasValue ? $"company={_selectedCompanyId.Value}" : string.Empty;
 
     private int TotalPages => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
     private IEnumerable<BatchVariantOption> SelectedVariants => _batches.FirstOrDefault(x => x.Id == _selectedBatchId)?.Variants ?? [];
@@ -141,20 +178,62 @@
             Navigation.NavigateTo("/", true);
             return;
         }
-        await LoadAsync();
+        if (AuthSession.IsSystemAdmin)
+        {
+            await LoadCompaniesAsync();
+        }
+        else
+        {
+            await LoadAsync();
+        }
+
         await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadCompaniesAsync()
+    {
+        try
+        {
+            _companies = await CreateApiClient().GetFromJsonAsync<List<ManagedCompany>>("/api/companies") ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Companies could not load: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task OnCompanyChanged(Guid? companyId)
+    {
+        _selectedCompanyId = companyId;
+        _page = 1;
+        if (companyId.HasValue)
+        {
+            await LoadAsync();
+        }
+        else
+        {
+            _batches = [];
+            _records = [];
+            _metrics = new();
+            _total = 0;
+        }
     }
 
     private async Task LoadAsync()
     {
+        if (RequiresFarmSelection && !_selectedCompanyId.HasValue)
+        {
+            return;
+        }
+
         _loading = true;
         try
         {
             var client = CreateApiClient();
-            _batches = await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [];
-            _metrics = await client.GetFromJsonAsync<HealthMetrics>("/api/bird-health/metrics") ?? new();
+            _batches = await client.GetFromJsonAsync<List<BatchOption>>(WithCompany("/api/batches/active")) ?? [];
+            _metrics = await client.GetFromJsonAsync<HealthMetrics>(WithCompany("/api/bird-health/metrics")) ?? new();
             var type = _tableTab == 1 ? "dead" : "sick";
-            var response = await client.GetFromJsonAsync<PagedHealthResponse>($"/api/bird-health?type={type}&page={_page}&pageSize={PageSize}");
+            var response = await client.GetFromJsonAsync<PagedHealthResponse>(WithCompany($"/api/bird-health?type={type}&page={_page}&pageSize={PageSize}"));
             _records = response?.Items ?? [];
             _total = response?.Total ?? 0;
         }
@@ -211,8 +290,13 @@
         }
     }
 
-    private void BeginResolve(HealthRow row)
+    private async Task BeginResolve(HealthRow row)
     {
+        if (!await TableActionConfirm.ConfirmAsync("update recovery/death for this sick bird record"))
+        {
+            return;
+        }
+
         _resolveTarget = row;
         _resolve = new();
     }
@@ -220,6 +304,11 @@
     private async Task ResolveAsync()
     {
         if (_resolveTarget is null) return;
+        if (!await TableActionConfirm.ConfirmAsync("apply this recovery/death update"))
+        {
+            return;
+        }
+
         var response = await CreateApiClient().PostAsJsonAsync($"/api/bird-health/{_resolveTarget.Id}/resolve-sick", _resolve);
         if (!response.IsSuccessStatusCode)
         {
@@ -244,7 +333,33 @@
         return client;
     }
 
+    private string WithCompany(string path)
+    {
+        if (string.IsNullOrEmpty(CompanyQuery))
+        {
+            return path;
+        }
+
+        return path.Contains('?', StringComparison.Ordinal) ? $"{path}&{CompanyQuery}" : $"{path}?{CompanyQuery}";
+    }
+
     private static string DisplayColor(int value) => value switch { 0 => "White", 1 => "Brown", 2 => "Black", 3 => "Speckled", _ => "Mixed" };
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var title = _tableTab == 0 ? "Sick Birds" : "Dead Birds";
+        var headers = new[] { "Date", "Batch", "Color", "Birds", "Cause" };
+        var rows = _records.Select(x => (IReadOnlyList<string>)
+        [
+            x.Date.ToString("MMM d, yyyy"),
+            x.BatchNumber,
+            DisplayColor(x.BirdColor),
+            x.Count.ToString("N0"),
+            x.Cause
+        ]).ToList();
+
+        return new TableExportPayload(title, headers, rows, $"Exported {DateTime.Now:g}");
+    }
 
     private sealed record HealthMetrics(int SickBirds = 0, int DeadBirds = 0);
     private sealed record PagedHealthResponse(List<HealthRow> Items, int Total, int Page, int PageSize);

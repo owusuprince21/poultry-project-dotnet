@@ -1,0 +1,235 @@
+@page "/marketplace/activities"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Shared
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
+
+<PageTitle>Marketplace Activities</PageTitle>
+
+@if (!_loaded)
+{
+    <PageLoader Message="Loading activities..." />
+}
+else if (!AuthSession.IsFarmAdmin && !AuthSession.IsSystemAdmin && !AuthSession.CanAccessPage("marketplace"))
+{
+    <ModulePageShell Title="Marketplace Activities" Subtitle="Share farm updates on the public marketplace.">
+        <ModuleStatusPanel Title="Restricted" Description="Farm admins and workers with marketplace access can post activities." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Publish farm posts" Subtitle="Post photos and updates for the public marketplace. Anyone can like, comment, and share there — no login required.">
+        <MudStack Spacing="3">
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                Engagement (likes, comments, shares) happens on the public marketplace feed.
+                <MudLink Href="@MarketplaceFeedUrl" Target="_blank">Open marketplace activity feed</MudLink>
+            </MudAlert>
+
+            <MudPaper Class="pa-4 rounded-lg border border-slate-200" Elevation="0">
+                <MudStack Spacing="2">
+                    <MudText Typo="Typo.h6">New post</MudText>
+                    <MudTextField @bind-Value="_title" Label="Headline (optional)" Variant="Variant.Outlined" Placeholder="Short headline — or leave blank" />
+                    <MudTextField @bind-Value="_body" Label="What's happening on your farm?" Variant="Variant.Outlined" Lines="4" Placeholder="Share an update, tip, or photo moment..." />
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <label class="mud-button-root mud-button mud-button-outlined mud-button-outlined-primary mud-button-size-medium mud-ripple">
+                            <span class="mud-button-label" style="display:inline-flex;align-items:center;gap:.35rem;cursor:pointer;">
+                                <MudIcon Icon="@Icons.Material.Filled.Image" Size="Size.Small" />
+                                @(_uploading ? "Uploading..." : "Add photo")
+                            </span>
+                            <InputFile OnChange="OnMediaSelected" accept="image/jpeg,image/png,image/webp,image/gif" style="display:none" disabled="@_uploading" />
+                        </label>
+                        @if (!string.IsNullOrWhiteSpace(_mediaUrl))
+                        {
+                            <MudButton Variant="Variant.Text" Color="Color.Error" OnClick="@(() => _mediaUrl = null)">Remove photo</MudButton>
+                        }
+                        <MudSpacer />
+                        <MudSwitch T="bool" @bind-Value="_publishNow" Label="Publish" Color="Color.Success" />
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving || _uploading || string.IsNullOrWhiteSpace(_body)" OnClick="CreateAsync">
+                            @(_saving ? "Posting..." : "Post")
+                        </MudButton>
+                    </MudStack>
+                    @if (!string.IsNullOrWhiteSpace(_mediaUrl))
+                    {
+                        <MudImage Src="@ResolveMediaUrl(_mediaUrl)" Alt="Post media" Class="rounded-lg" Style="max-height:220px;object-fit:cover;width:100%;max-width:480px;" />
+                    }
+                </MudStack>
+            </MudPaper>
+
+            <MudText Typo="Typo.h6">Your posts</MudText>
+            @if (_myPosts.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info">No posts yet. Publish your first update above.</MudAlert>
+            }
+            else
+            {
+                @foreach (var post in _myPosts)
+                {
+                    <MudPaper Class="pa-4 rounded-lg border border-slate-200" Elevation="0" @key="post.Id">
+                        <MudStack Spacing="2">
+                            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                                <div>
+                                    <MudText Typo="Typo.subtitle1">@post.Title</MudText>
+                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                        @(post.IsPublished ? "Published" : "Draft")
+                                        · @(post.PublishedAt?.ToLocalTime().ToString("g") ?? post.CreatedAt.ToLocalTime().ToString("g"))
+                                    </MudText>
+                                </div>
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteAsync(post.Id, post.Title))">Delete</MudMenuItem>
+                                </MudMenu>
+                            </MudStack>
+                            <MudText Typo="Typo.body1" Style="white-space:pre-wrap;">@post.Body</MudText>
+                            @if (!string.IsNullOrWhiteSpace(post.MediaUrl))
+                            {
+                                <MudImage Src="@ResolveMediaUrl(post.MediaUrl)" Alt="@post.Title" Class="rounded-lg" Style="max-height:280px;object-fit:cover;width:100%;" />
+                            }
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                @post.LikeCount likes · @post.CommentCount comments · @post.ShareCount shares on marketplace
+                            </MudText>
+                        </MudStack>
+                    </MudPaper>
+                }
+            }
+        </MudStack>
+    </ModulePageShell>
+}
+
+@code {
+    private bool _loaded;
+    private bool _saving;
+    private bool _uploading;
+    private bool _publishNow = true;
+    private string _title = string.Empty;
+    private string _body = string.Empty;
+    private string? _mediaUrl;
+    private List<ActivityRow> _myPosts = [];
+    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+    private string MarketplaceFeedUrl => $"{(Configuration["Apps:MarketplaceBaseUrl"] ?? "http://localhost:5084").TrimEnd('/')}/activities";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated) { Navigation.NavigateTo("/", replace: true); return; }
+        if (AuthSession.MustChangePassword) { Navigation.NavigateTo("/force-password-change", replace: true); return; }
+        if (AuthSession.IsFarmAdmin || AuthSession.IsSystemAdmin || AuthSession.CanAccessPage("marketplace"))
+        {
+            await LoadAsync();
+        }
+        _loaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        var client = CreateApiClient();
+        _myPosts = await client.GetFromJsonAsync<List<ActivityRow>>("/api/marketplace/farm/activities") ?? [];
+    }
+
+    private async Task OnMediaSelected(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file is null) return;
+
+        _uploading = true;
+        try
+        {
+            await using var stream = file.OpenReadStream(5 * 1024 * 1024);
+            using var content = new MultipartFormDataContent();
+            var streamContent = new StreamContent(stream);
+            streamContent.Headers.ContentType = new MediaTypeHeaderValue(file.ContentType);
+            content.Add(streamContent, "file", file.Name);
+            content.Add(new StringContent("activities"), "folder");
+
+            var client = CreateApiClient();
+            var response = await client.PostAsync("/api/marketplace/farm/uploads", content);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            var uploaded = await response.Content.ReadFromJsonAsync<UploadResponse>();
+            _mediaUrl = uploaded?.Url;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        _saving = true;
+        try
+        {
+            var client = CreateApiClient();
+            var response = await client.PostAsJsonAsync("/api/marketplace/farm/activities", new
+            {
+                title = string.IsNullOrWhiteSpace(_title) ? null : _title,
+                body = _body,
+                mediaUrl = _mediaUrl,
+                publishNow = _publishNow
+            });
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            _title = string.Empty;
+            _body = string.Empty;
+            _mediaUrl = null;
+            Snackbar.Add(_publishNow ? "Published to marketplace." : "Draft saved.", Severity.Success);
+            await LoadAsync();
+        }
+        finally { _saving = false; }
+    }
+
+    private async Task DeleteAsync(Guid id, string title)
+    {
+        if (!await TableActionConfirm.ConfirmAsync("delete", title))
+        {
+            return;
+        }
+
+        var client = CreateApiClient();
+        await client.DeleteAsync($"/api/marketplace/farm/activities/{id}");
+        await LoadAsync();
+    }
+
+    private string ResolveMediaUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return url;
+        }
+
+        return $"{ApiBase}/{url.TrimStart('/')}";
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private sealed record ActivityRow(Guid Id, string Title, string Body, string? MediaUrl, bool IsPublished, DateTimeOffset? PublishedAt, DateTimeOffset CreatedAt, int LikeCount, int CommentCount, int ShareCount);
+    private sealed record UploadResponse(string Url);
+}

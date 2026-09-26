@@ -19,16 +19,17 @@ public static class DependencyInjection
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options
-                .UseSqlServer(connectionString, sql =>
+                .UseNpgsql(connectionString, npgsql =>
                 {
-                    sql.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
-                    sql.EnableRetryOnFailure(5);
+                    npgsql.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+                    npgsql.EnableRetryOnFailure(5);
                 })
                 .ConfigureWarnings(warnings =>
                     warnings.Ignore(RelationalEventId.PendingModelChangesWarning)));
 
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped<IDateTimeProvider, DateTimeProvider>();
+        services.AddScoped<IAuditLogWriter, AuditLogWriter>();
 
         services
             .AddIdentityCore<ApplicationUser>(options =>

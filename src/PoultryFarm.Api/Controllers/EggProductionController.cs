@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PoultryFarm.Api.Authorization;
+using PoultryFarm.Api.Services;
 using PoultryFarm.Application.Common.Interfaces;
 using PoultryFarm.Domain.Batches;
 using PoultryFarm.Domain.Common;
@@ -19,16 +20,18 @@ namespace PoultryFarm.Api.Controllers;
 public sealed class EggProductionController(
     ApplicationDbContext dbContext,
     UserManager<ApplicationUser> userManager,
-    IActivityNotifier activityNotifier) : ControllerBase
+    IActivityNotifier activityNotifier,
+    ControllerAudit audit) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<PagedEggProductionResponse>> Get(
+        [FromQuery] Guid? company,
         [FromQuery] Guid? batchId,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 10,
         CancellationToken cancellationToken = default)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(company, cancellationToken);
         if (scope.Blocked)
         {
             return Forbid();
@@ -62,12 +65,13 @@ public sealed class EggProductionController(
 
     [HttpGet("metrics")]
     public async Task<ActionResult<EggProductionMetricsDto>> Metrics(
+        [FromQuery] Guid? company,
         [FromQuery] Guid? batchId,
         [FromQuery] EggSize? size,
         [FromQuery] VariantColor? color,
         CancellationToken cancellationToken)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(company, cancellationToken);
         if (scope.Blocked)
         {
             return Forbid();
@@ -115,6 +119,11 @@ public sealed class EggProductionController(
     [HttpPost]
     public async Task<ActionResult<EggProductionDto>> Create(EggProductionRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
@@ -153,6 +162,7 @@ public sealed class EggProductionController(
         dbContext.EggProductions.Add(production);
         await dbContext.SaveChangesAsync(cancellationToken);
         await NotifyOperationAsync(user, production.CompanyId, "Egg production recorded", BuildEggProductionNotificationDetail(user, production, variant), "egg-production", production.Id, cancellationToken);
+        await WriteProductionAuditAsync("Create", production, variant.Batch?.BatchNumber, cancellationToken);
 
         return Ok(ToDto(production));
     }
@@ -160,6 +170,11 @@ public sealed class EggProductionController(
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<EggProductionDto>> Update(Guid id, EggProductionRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
@@ -205,12 +220,18 @@ public sealed class EggProductionController(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         await NotifyOperationAsync(user, production.CompanyId, "Egg production updated", BuildEggProductionNotificationDetail(user, production, variant), "egg-production", production.Id, cancellationToken);
+        await WriteProductionAuditAsync("Update", production, variant.Batch?.BatchNumber, cancellationToken);
         return Ok(ToDto(production));
     }
 
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await GetCurrentUserAsync();
         if (user is null)
         {
@@ -231,12 +252,13 @@ public sealed class EggProductionController(
         production.IsDeleted = true;
         await dbContext.SaveChangesAsync(cancellationToken);
         await NotifyOperationAsync(user, production.CompanyId, "Egg production deleted", $"{DisplayName(user)} deleted an egg production entry.", "egg-production", production.Id, cancellationToken);
+        await WriteProductionAuditAsync("Delete", production, production.BatchId.ToString(), cancellationToken);
         return NoContent();
     }
 
     private async Task<BatchVariant?> GetScopedVariantAsync(Guid variantId, CancellationToken cancellationToken)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(null, cancellationToken);
         if (scope.Blocked)
         {
             return null;
@@ -256,21 +278,48 @@ public sealed class EggProductionController(
 
     private async Task<bool> CanAccessCompanyAsync(Guid companyId, CancellationToken cancellationToken)
     {
-        var scope = await ResolveCompanyScopeAsync(cancellationToken);
+        var scope = await ResolveCompanyScopeAsync(null, cancellationToken);
         return !scope.Blocked && (!scope.CompanyId.HasValue || scope.CompanyId.Value == companyId);
     }
 
-    private async Task<CompanyScope> ResolveCompanyScopeAsync(CancellationToken cancellationToken)
+    private async Task<CompanyScope> ResolveCompanyScopeAsync(Guid? requestedCompany, CancellationToken cancellationToken)
     {
         if (PermissionHelpers.IsSystemAdmin(User))
         {
-            return new CompanyScope(null, false);
+            return new CompanyScope(requestedCompany, false);
         }
 
         var user = await GetCurrentUserAsync();
-        return user?.CompanyId is Guid companyId
-            ? new CompanyScope(companyId, false)
-            : new CompanyScope(null, true);
+        if (user?.CompanyId is not Guid companyId)
+        {
+            return new CompanyScope(null, true);
+        }
+
+        if (requestedCompany.HasValue && requestedCompany.Value != companyId)
+        {
+            return new CompanyScope(null, true);
+        }
+
+        return new CompanyScope(companyId, false);
+    }
+
+    private async Task WriteProductionAuditAsync(string action, EggProduction production, string? batchLabel, CancellationToken cancellationToken)
+    {
+        var companyName = await dbContext.Companies.AsNoTracking()
+            .Where(x => x.Id == production.CompanyId)
+            .Select(x => x.Name)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            action,
+            "Operations",
+            "EggProduction",
+            batchLabel ?? production.Date.ToString("yyyy-MM-dd"),
+            $"{action} egg production for {production.Date:yyyy-MM-dd} ({production.TotalEggs:N0} eggs).",
+            production.Id,
+            production.CompanyId,
+            companyName,
+            cancellationToken: cancellationToken);
     }
 
     private async Task<ApplicationUser?> GetCurrentUserAsync()

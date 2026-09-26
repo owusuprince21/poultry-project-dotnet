@@ -11,12 +11,14 @@ public sealed class ChatMessageConfiguration : IEntityTypeConfiguration<ChatMess
         builder.ToTable("ChatMessages");
         builder.HasKey(x => x.Id);
         builder.HasQueryFilter(x => !x.IsDeleted);
-        builder.Property(x => x.Body).HasColumnType("nvarchar(max)").IsRequired();
-        builder.Property(x => x.RowVersion).IsRowVersion();
+        builder.Property(x => x.Body).HasColumnType("text").IsRequired();
+        // RowVersion concurrency is configured globally for PostgreSQL (xmin).
         builder.HasOne(x => x.ReplyToMessage).WithMany().HasForeignKey(x => x.ReplyToMessageId);
         builder.HasMany(x => x.Reactions).WithOne(x => x.ChatMessage).HasForeignKey(x => x.ChatMessageId);
         builder.HasIndex(x => new { x.SenderUserId, x.RecipientUserId, x.SentAt });
         builder.HasIndex(x => new { x.RecipientUserId, x.SentAt });
+        builder.HasIndex(x => x.MarketplaceConversationId);
+        builder.HasIndex(x => x.ListingId);
     }
 }
 
@@ -28,7 +30,6 @@ public sealed class ChatMessageReactionConfiguration : IEntityTypeConfiguration<
         builder.HasKey(x => x.Id);
         builder.HasQueryFilter(x => !x.IsDeleted);
         builder.Property(x => x.Emoji).HasMaxLength(16).IsRequired();
-        builder.Property(x => x.RowVersion).IsRowVersion();
         builder.HasIndex(x => new { x.ChatMessageId, x.UserId, x.Emoji }).IsUnique();
     }
 }
@@ -42,7 +43,6 @@ public sealed class FarmAssistanceMessageConfiguration : IEntityTypeConfiguratio
         builder.HasQueryFilter(x => !x.IsDeleted);
         builder.Property(x => x.Sender).HasMaxLength(24).IsRequired();
         builder.Property(x => x.Body).HasMaxLength(4000).IsRequired();
-        builder.Property(x => x.RowVersion).IsRowVersion();
         builder.HasIndex(x => new { x.CompanyId, x.UserId, x.SentAt });
     }
 }
@@ -59,7 +59,6 @@ public sealed class AppNotificationConfiguration : IEntityTypeConfiguration<AppN
         builder.Property(x => x.Detail).HasMaxLength(4000).IsRequired();
         builder.Property(x => x.Kind).HasMaxLength(40).IsRequired();
         builder.Property(x => x.TargetType).HasMaxLength(60);
-        builder.Property(x => x.RowVersion).IsRowVersion();
         builder.HasIndex(x => new { x.RecipientUserId, x.ReadAt, x.SentAt });
         builder.HasIndex(x => new { x.CompanyId, x.SentAt });
     }

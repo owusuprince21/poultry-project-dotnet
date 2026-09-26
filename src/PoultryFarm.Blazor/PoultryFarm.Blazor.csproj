@@ -12,4 +12,8 @@
     <PackageReference Include="MudBlazor" Version="9.5.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\PoultryFarm.Domain\PoultryFarm.Domain.csproj" />
+  </ItemGroup>
+
 </Project>

@@ -1,14 +1,35 @@
 @page "/production"
 @using System.Net.Http.Headers
+@using PoultryFarm.Blazor.Components.UI.Shared
+@using PoultryFarm.Blazor.Services
 
 @inject AuthSession AuthSession
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
 @inject NavigationManager Navigation
 
 <PageTitle>Egg Production</PageTitle>
 
-<ModulePageShell Title="Egg Production" Subtitle="Record and monitor daily egg collection by batch, bird color, and egg size.">
+<ModulePageShell Title="Egg Production" Subtitle="@PageSubtitle">
+    @if (AuthSession.IsSystemAdmin)
+    {
+        <MudPaper Elevation="0" Class="work-surface pa-4 mb-4">
+            <MudSelect T="Guid?" Label="Farm" Value="_selectedCompanyId" ValueChanged="OnCompanyChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" Clearable="true">
+                @foreach (var company in _companies)
+                {
+                    <MudSelectItem T="Guid?" Value="@company.Id">@company.Name (@company.Code)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudPaper>
+    }
+
+    @if (RequiresFarmSelection && !_selectedCompanyId.HasValue)
+    {
+        <EmptyState Icon="@Icons.Material.Filled.Agriculture" Title="Select a farm" Description="Choose a farm to view egg production metrics and records." />
+    }
+    else
+    {
     <MudGrid Spacing="3">
         <MudItem xs="12" md="4">
             <DashboardMetricCard Label="Total Eggs In Crates" Value="@($"{_metrics.TotalCrates:N2}")" Detail="@($"{_metrics.TotalEggs:N0} eggs, 30 eggs per crate")" Icon="@Icons.Material.Filled.Egg" Color="Color.Success" />
@@ -52,6 +73,8 @@
     </MudPaper>
 
     <MudGrid Spacing="3" Class="mt-1">
+        @if (!AuthSession.IsSuperAdmin)
+        {
         <MudItem xs="12" lg="5">
             <MudPaper Elevation="0" Class="work-surface pa-4">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
@@ -126,8 +149,9 @@
                 </MudForm>
             </MudPaper>
         </MudItem>
+        }
 
-        <MudItem xs="12" lg="7">
+        <MudItem xs="12" lg="@(AuthSession.IsSuperAdmin ? 12 : 7)">
             <MudPaper Elevation="0" Class="work-surface pa-4">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
                     <div>
@@ -137,6 +161,10 @@
                     <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" />
                 </MudStack>
 
+                <TableExportBar Title="Production records"
+                                FileName="egg-production"
+                                Disabled="@(!_records.Any())"
+                                GetPayload="BuildExportPayload" />
                 <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading">
                     <HeaderContent>
                         <MudTh>Date</MudTh>
@@ -153,10 +181,13 @@
                         <MudTd>@(context.CollectionType == 0 ? "Sorted" : "Unsorted")</MudTd>
                         <MudTd>@context.TotalEggs.ToString("N0")</MudTd>
                         <MudTd>
-                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
-                                <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => Edit(context))">Update</MudMenuItem>
-                                <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteAsync(context.Id))">Delete</MudMenuItem>
-                            </MudMenu>
+                            @if (!AuthSession.IsSuperAdmin)
+                            {
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => Edit(context))">Update</MudMenuItem>
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteAsync(context.Id))">Delete</MudMenuItem>
+                                </MudMenu>
+                            }
                         </MudTd>
                     </RowTemplate>
                     <NoRecordsContent>
@@ -168,6 +199,7 @@
             </MudPaper>
         </MudItem>
     </MudGrid>
+    }
 </ModulePageShell>
 
 @code {
@@ -187,6 +219,14 @@
     private EggMetrics _metrics = new();
     private List<BatchOption> _batches = [];
     private List<EggProductionRow> _records = [];
+    private List<ManagedCompany> _companies = [];
+    private Guid? _selectedCompanyId;
+
+    private bool RequiresFarmSelection => AuthSession.IsSystemAdmin;
+    private string PageSubtitle => AuthSession.IsSuperAdmin
+        ? "Read-only farm overview"
+        : "Record and monitor daily egg collection by batch, bird color, and egg size.";
+    private string CompanyQuery => AuthSession.IsSystemAdmin && _selectedCompanyId.HasValue ? $"company={_selectedCompanyId.Value}" : string.Empty;
 
     private int TotalPages => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
     private string SelectedSizeLabel => _metricSize switch
@@ -228,20 +268,60 @@
             return;
         }
 
+        if (AuthSession.IsSystemAdmin)
+        {
+            await LoadCompaniesAsync();
+            return;
+        }
+
         await LoadAsync();
+    }
+
+    private async Task LoadCompaniesAsync()
+    {
+        try
+        {
+            _companies = await CreateApiClient().GetFromJsonAsync<List<ManagedCompany>>("/api/companies") ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Companies could not load: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task OnCompanyChanged(Guid? companyId)
+    {
+        _selectedCompanyId = companyId;
+        _page = 1;
+        if (companyId.HasValue)
+        {
+            await LoadAsync();
+        }
+        else
+        {
+            _batches = [];
+            _records = [];
+            _metrics = new();
+            _total = 0;
+        }
     }
 
     private async Task LoadAsync()
     {
+        if (RequiresFarmSelection && !_selectedCompanyId.HasValue)
+        {
+            return;
+        }
+
         _loading = true;
         try
         {
             var client = CreateApiClient();
-            _batches = (await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [])
+            _batches = (await client.GetFromJsonAsync<List<BatchOption>>(WithCompany("/api/batches/active")) ?? [])
                 .Where(x => x.BirdType == 0)
                 .ToList();
             await LoadMetricsAsync();
-            var response = await client.GetFromJsonAsync<PagedEggResponse>($"/api/egg-production?page={_page}&pageSize={PageSize}");
+            var response = await client.GetFromJsonAsync<PagedEggResponse>(WithCompany($"/api/egg-production?page={_page}&pageSize={PageSize}"));
             _records = response?.Items ?? [];
             _total = response?.Total ?? 0;
         }
@@ -271,7 +351,20 @@
             query.Add($"color={_metricColor}");
         }
 
-        _metrics = await CreateApiClient().GetFromJsonAsync<EggMetrics>($"/api/egg-production/metrics{(query.Count > 0 ? $"?{string.Join("&", query)}" : string.Empty)}") ?? new();
+        var path = query.Count > 0
+            ? $"/api/egg-production/metrics?{string.Join("&", query)}"
+            : "/api/egg-production/metrics";
+        _metrics = await CreateApiClient().GetFromJsonAsync<EggMetrics>(WithCompany(path)) ?? new();
+    }
+
+    private string WithCompany(string path)
+    {
+        if (string.IsNullOrEmpty(CompanyQuery))
+        {
+            return path;
+        }
+
+        return path.Contains('?', StringComparison.Ordinal) ? $"{path}&{CompanyQuery}" : $"{path}?{CompanyQuery}";
     }
 
     private async Task OnMetricBatchChanged(Guid? value)
@@ -337,8 +430,13 @@
         }
     }
 
-    private void Edit(EggProductionRow row)
+    private async Task Edit(EggProductionRow row)
     {
+        if (!await TableActionConfirm.ConfirmAsync("update", $"egg production from {row.Date:MMM d, yyyy}"))
+        {
+            return;
+        }
+
         _editingId = row.Id;
         _selectedBatchId = row.BatchId;
         _productionDate = row.Date.ToDateTime(TimeOnly.MinValue);
@@ -359,6 +457,11 @@
 
     private async Task DeleteAsync(Guid id)
     {
+        if (!await TableActionConfirm.ConfirmAsync("delete this egg production record"))
+        {
+            return;
+        }
+
         var response = await CreateApiClient().DeleteAsync($"/api/egg-production/{id}");
         if (!response.IsSuccessStatusCode)
         {
@@ -401,6 +504,21 @@
             4 => "Mixed",
             _ => "Mixed"
         };
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Date", "Batch", "Color", "Type", "Total Eggs" };
+        var rows = _records.Select(x => (IReadOnlyList<string>)
+        [
+            x.Date.ToString("MMM d, yyyy"),
+            x.BatchNumber,
+            DisplayColor(x.BirdColor),
+            x.CollectionType == 0 ? "Sorted" : "Unsorted",
+            x.TotalEggs.ToString("N0")
+        ]).ToList();
+
+        return new TableExportPayload("Production Records", headers, rows, $"Exported {DateTime.Now:g}");
+    }
 
     private sealed record PagedEggResponse(List<EggProductionRow> Items, int Total, int Page, int PageSize);
     private sealed record EggMetrics(int TotalEggs = 0, decimal TotalCrates = 0, int SelectedSizeEggs = 0, int Entries = 0, int SmallEggs = 0, int MediumEggs = 0, int LargeEggs = 0, int JumboEggs = 0, int UnsortedEggs = 0);

@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using PoultryFarm.Api.Authorization;
+using PoultryFarm.Api.Services;
 using PoultryFarm.Application.Common.Interfaces;
 using PoultryFarm.Domain.Common;
 using PoultryFarm.Domain.Sales;
@@ -15,18 +17,33 @@ namespace PoultryFarm.Api.Controllers;
 [ApiController]
 [Route("api/sales")]
 [Authorize]
-public sealed class SalesController(ApplicationDbContext dbContext, UserManager<ApplicationUser> userManager, IActivityNotifier notifier) : ControllerBase
+public sealed class SalesController(ApplicationDbContext dbContext, UserManager<ApplicationUser> userManager, IActivityNotifier notifier, ControllerAudit audit) : ControllerBase
 {
     [HttpGet("metrics")]
-    public async Task<IActionResult> Metrics(CancellationToken cancellationToken)
+    public async Task<IActionResult> Metrics([FromQuery] Guid? company, CancellationToken cancellationToken)
     {
-        var companyId = await CompanyIdAsync();
-        if (!companyId.HasValue) return Forbid();
-        var produced = await dbContext.EggProductions.Where(x => x.CompanyId == companyId).GroupBy(_ => 1).Select(g => new
+        var companyId = await ResolveCompanyIdAsync(company, cancellationToken);
+        if (!PermissionHelpers.IsSystemAdmin(User) && !companyId.HasValue)
+        {
+            return Forbid();
+        }
+        var productionQuery = dbContext.EggProductions.AsQueryable();
+        if (companyId.HasValue)
+        {
+            productionQuery = productionQuery.Where(x => x.CompanyId == companyId.Value);
+        }
+
+        var produced = await productionQuery.GroupBy(_ => 1).Select(g => new
         {
             small = g.Sum(x => x.SmallEggs), medium = g.Sum(x => x.MediumEggs), large = g.Sum(x => x.LargeEggs), jumbo = g.Sum(x => x.ExtraLargeEggs), unsorted = g.Sum(x => x.UnsortedEggs)
         }).FirstOrDefaultAsync(cancellationToken);
-        var sold = await dbContext.EggSaleItems.Where(x => x.EggSale != null && x.EggSale.CompanyId == companyId).GroupBy(x => x.Size).Select(g => new { size = g.Key, eggs = g.Sum(x => x.Eggs) }).ToListAsync(cancellationToken);
+        var soldQuery = dbContext.EggSaleItems.Where(x => x.EggSale != null);
+        if (companyId.HasValue)
+        {
+            soldQuery = soldQuery.Where(x => x.EggSale!.CompanyId == companyId.Value);
+        }
+
+        var sold = await soldQuery.GroupBy(x => x.Size).Select(g => new { size = g.Key, eggs = g.Sum(x => x.Eggs) }).ToListAsync(cancellationToken);
         int Stock(EggSize size, int total) => Math.Max(0, total - sold.Where(x => x.size == size).Sum(x => x.eggs));
         return Ok(new
         {
@@ -39,61 +56,163 @@ public sealed class SalesController(ApplicationDbContext dbContext, UserManager<
     }
 
     [HttpGet("customers")]
-    public async Task<IActionResult> Customers(CancellationToken cancellationToken)
+    public async Task<IActionResult> Customers([FromQuery] Guid? company, CancellationToken cancellationToken)
     {
-        var companyId = await CompanyIdAsync();
-        if (!companyId.HasValue) return Forbid();
-        var customers = await dbContext.EggSales.AsNoTracking().Where(x => x.CompanyId == companyId).Select(x => x.BuyerName)
-            .Concat(dbContext.BirdSales.AsNoTracking().Where(x => x.CompanyId == companyId).Select(x => x.BuyerName))
+        var companyId = await ResolveCompanyIdAsync(company, cancellationToken);
+        if (!PermissionHelpers.IsSystemAdmin(User) && !companyId.HasValue)
+        {
+            return Forbid();
+        }
+
+        var eggSales = dbContext.EggSales.AsNoTracking().AsQueryable();
+        var birdSales = dbContext.BirdSales.AsNoTracking().AsQueryable();
+        if (companyId.HasValue)
+        {
+            eggSales = eggSales.Where(x => x.CompanyId == companyId.Value);
+            birdSales = birdSales.Where(x => x.CompanyId == companyId.Value);
+        }
+
+        var customers = await eggSales.Select(x => x.BuyerName)
+            .Concat(birdSales.Select(x => x.BuyerName))
             .Distinct().OrderBy(x => x).ToListAsync(cancellationToken);
         return Ok(customers);
     }
 
     [HttpGet("leaderboard")]
-    public async Task<IActionResult> Leaderboard(CancellationToken cancellationToken)
+    public async Task<IActionResult> Leaderboard([FromQuery] Guid? company, CancellationToken cancellationToken)
     {
-        var companyId = await CompanyIdAsync();
-        if (!companyId.HasValue) return Forbid();
-        var egg = await dbContext.EggSales.AsNoTracking().Where(x => x.CompanyId == companyId).GroupBy(x => x.BuyerName).Select(g => new { customer = g.Key, revenue = g.Sum(x => x.GrandTotal), purchases = g.Count() }).ToListAsync(cancellationToken);
-        var bird = await dbContext.BirdSales.AsNoTracking().Where(x => x.CompanyId == companyId).GroupBy(x => x.BuyerName).Select(g => new { customer = g.Key, revenue = g.Sum(x => x.TotalAmount), purchases = g.Count() }).ToListAsync(cancellationToken);
+        var companyId = await ResolveCompanyIdAsync(company, cancellationToken);
+        if (!PermissionHelpers.IsSystemAdmin(User) && !companyId.HasValue)
+        {
+            return Forbid();
+        }
+
+        var eggQuery = dbContext.EggSales.AsNoTracking().AsQueryable();
+        var birdQuery = dbContext.BirdSales.AsNoTracking().AsQueryable();
+        if (companyId.HasValue)
+        {
+            eggQuery = eggQuery.Where(x => x.CompanyId == companyId.Value);
+            birdQuery = birdQuery.Where(x => x.CompanyId == companyId.Value);
+        }
+
+        var egg = await eggQuery.GroupBy(x => x.BuyerName).Select(g => new { customer = g.Key, revenue = g.Sum(x => x.GrandTotal), purchases = g.Count() }).ToListAsync(cancellationToken);
+        var bird = await birdQuery.GroupBy(x => x.BuyerName).Select(g => new { customer = g.Key, revenue = g.Sum(x => x.TotalAmount), purchases = g.Count() }).ToListAsync(cancellationToken);
         return Ok(egg.Concat(bird).GroupBy(x => x.customer).Select(g => new { customer = g.Key, revenue = g.Sum(x => x.revenue), purchases = g.Sum(x => x.purchases) }).OrderByDescending(x => x.revenue).Take(5));
     }
 
     [HttpGet]
-    public async Task<IActionResult> Get(CancellationToken cancellationToken)
+    public async Task<IActionResult> Get(
+        [FromQuery] Guid? company,
+        [FromQuery] string type = "all",
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken cancellationToken = default)
     {
-        var companyId = await CompanyIdAsync();
-        if (!companyId.HasValue) return Forbid();
-        var eggs = await dbContext.EggSales.AsNoTracking().Where(x => x.CompanyId == companyId).OrderByDescending(x => x.SaleDate).Take(50).Select(x => new { x.Id, type = "Egg", date = x.SaleDate, customer = x.BuyerName, amount = x.GrandTotal, receipt = x.ReceiptId }).ToListAsync(cancellationToken);
-        var birds = await dbContext.BirdSales.AsNoTracking().Where(x => x.CompanyId == companyId).OrderByDescending(x => x.SaleDate).Take(50).Select(x => new { x.Id, type = "Bird", date = x.SaleDate, customer = x.BuyerName, amount = x.TotalAmount, receipt = "" }).ToListAsync(cancellationToken);
-        return Ok(eggs.Concat(birds).OrderByDescending(x => x.date).Take(50));
+        var companyId = await ResolveCompanyIdAsync(company, cancellationToken);
+        if (!PermissionHelpers.IsSystemAdmin(User) && !companyId.HasValue)
+        {
+            return Forbid();
+        }
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+        var normalizedType = type.Trim().ToLowerInvariant();
+
+        var eggQuery = dbContext.EggSales.AsNoTracking().AsQueryable();
+        var birdQuery = dbContext.BirdSales.AsNoTracking().AsQueryable();
+        if (companyId.HasValue)
+        {
+            eggQuery = eggQuery.Where(x => x.CompanyId == companyId.Value);
+            birdQuery = birdQuery.Where(x => x.CompanyId == companyId.Value);
+        }
+
+        decimal totalRevenue = 0;
+        if (normalizedType is "egg" or "all")
+        {
+            totalRevenue += await eggQuery.SumAsync(x => x.GrandTotal, cancellationToken);
+        }
+
+        if (normalizedType is "bird" or "all")
+        {
+            totalRevenue += await birdQuery.SumAsync(x => x.TotalAmount, cancellationToken);
+        }
+
+        if (normalizedType == "egg")
+        {
+            var total = await eggQuery.CountAsync(cancellationToken);
+            var items = await eggQuery
+                .OrderByDescending(x => x.SaleDate)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(x => new { x.Id, type = "Egg", date = x.SaleDate, customer = x.BuyerName, amount = x.GrandTotal, receipt = x.ReceiptId })
+                .ToListAsync(cancellationToken);
+            return Ok(new { items, total, page, pageSize, totalRevenue });
+        }
+
+        if (normalizedType == "bird")
+        {
+            var total = await birdQuery.CountAsync(cancellationToken);
+            var items = await birdQuery
+                .OrderByDescending(x => x.SaleDate)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(x => new { x.Id, type = "Bird", date = x.SaleDate, customer = x.BuyerName, amount = x.TotalAmount, receipt = "" })
+                .ToListAsync(cancellationToken);
+            return Ok(new { items, total, page, pageSize, totalRevenue });
+        }
+
+        var eggRows = await eggQuery
+            .Select(x => new { x.Id, type = "Egg", date = x.SaleDate, customer = x.BuyerName, amount = x.GrandTotal, receipt = x.ReceiptId })
+            .ToListAsync(cancellationToken);
+        var birdRows = await birdQuery
+            .Select(x => new { x.Id, type = "Bird", date = x.SaleDate, customer = x.BuyerName, amount = x.TotalAmount, receipt = "" })
+            .ToListAsync(cancellationToken);
+        var merged = eggRows.Concat(birdRows).OrderByDescending(x => x.date).ToList();
+        var mergedTotal = merged.Count;
+        var pageItems = merged.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        return Ok(new { items = pageItems, total = mergedTotal, page, pageSize, totalRevenue });
     }
 
     [HttpGet("eggs/{id:guid}/receipt")]
-    public async Task<IActionResult> EggReceipt(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> EggReceipt(Guid id, [FromQuery] Guid? company, CancellationToken cancellationToken)
     {
-        var companyId = await CompanyIdAsync();
-        if (!companyId.HasValue) return Forbid();
+        var companyId = await ResolveCompanyIdAsync(company, cancellationToken);
+        if (!PermissionHelpers.IsSystemAdmin(User) && !companyId.HasValue)
+        {
+            return Forbid();
+        }
 
-        var sale = await dbContext.EggSales
-            .AsNoTracking()
-            .Include(x => x.Items)
-            .FirstOrDefaultAsync(x => x.Id == id && x.CompanyId == companyId.Value, cancellationToken);
+        var saleQuery = dbContext.EggSales.AsNoTracking().Include(x => x.Items).Where(x => x.Id == id);
+        if (companyId.HasValue)
+        {
+            saleQuery = saleQuery.Where(x => x.CompanyId == companyId.Value);
+        }
+
+        var sale = await saleQuery.FirstOrDefaultAsync(cancellationToken);
 
         return sale is null ? NotFound(new { detail = "Receipt was not found." }) : Ok(BuildEggReceipt(sale));
     }
 
     [HttpGet("eggs/{id:guid}/receipt.pdf")]
-    public async Task<IActionResult> EggReceiptPdf(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> EggReceiptPdf(Guid id, [FromQuery] Guid? company, CancellationToken cancellationToken)
     {
-        var companyId = await CompanyIdAsync();
-        if (!companyId.HasValue) return Forbid();
+        var companyId = await ResolveCompanyIdAsync(company, cancellationToken);
+        if (!PermissionHelpers.IsSystemAdmin(User) && !companyId.HasValue)
+        {
+            return Forbid();
+        }
 
-        var sale = await dbContext.EggSales
+        var saleQuery = dbContext.EggSales
             .AsNoTracking()
             .Include(x => x.Company)
             .Include(x => x.Items)
-            .FirstOrDefaultAsync(x => x.Id == id && x.CompanyId == companyId.Value, cancellationToken);
+            .Where(x => x.Id == id);
+        if (companyId.HasValue)
+        {
+            saleQuery = saleQuery.Where(x => x.CompanyId == companyId.Value);
+        }
+
+        var sale = await saleQuery.FirstOrDefaultAsync(cancellationToken);
 
         if (sale is null)
         {
@@ -109,8 +228,29 @@ public sealed class SalesController(ApplicationDbContext dbContext, UserManager<
     [HttpPost("eggs")]
     public async Task<IActionResult> EggSale(EggSaleRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await UserAsync();
-        if (user?.CompanyId is not Guid companyId) return Forbid();
+        if (user is null)
+        {
+            return Unauthorized(new { detail = "User account was not found." });
+        }
+
+        var batch = await dbContext.Batches.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.BatchId, cancellationToken);
+        if (batch is null)
+        {
+            return BadRequest(new { detail = "Select a valid batch." });
+        }
+
+        if (!await CanWriteCompanyAsync(batch.CompanyId, cancellationToken))
+        {
+            return Forbid();
+        }
+
+        var companyId = batch.CompanyId;
         var saleLines = request.Items.Count > 0
             ? request.Items
             : [new EggSaleLineRequest(request.Size, request.Crates, request.Pieces, request.CostPerCrate)];
@@ -162,19 +302,39 @@ public sealed class SalesController(ApplicationDbContext dbContext, UserManager<
         var receipt = BuildEggReceipt(sale);
         var totalEggs = receipt.Eggs;
         await notifier.NotifyCompanyAsync(companyId, "Egg sale recorded", $"{DisplayName(user)} recorded an egg sale to {sale.BuyerName}: {totalEggs:N0} eggs across {sale.Items.Count:N0} size line(s) for GHS {sale.GrandTotal:N2}. Receipt {sale.ReceiptId}.", user.Id, DisplayName(user), targetType: "sales", targetId: sale.Id, cancellationToken: cancellationToken);
+        await WriteSalesAuditIfNeededAsync("Create", "EggSale", sale.BuyerName, $"Recorded egg sale {sale.ReceiptId} for GHS {sale.GrandTotal:N2}.", sale.Id, companyId, cancellationToken);
         return Ok(receipt);
     }
 
     [HttpPost("birds")]
     public async Task<IActionResult> BirdSale(BirdSaleRequest request, CancellationToken cancellationToken)
     {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
         var user = await UserAsync();
-        if (user?.CompanyId is not Guid companyId) return Forbid();
+        if (user is null)
+        {
+            return Unauthorized(new { detail = "User account was not found." });
+        }
+
         var variant = await dbContext.BatchVariants
             .Include(x => x.Batch)
                 .ThenInclude(x => x!.Variants)
-            .FirstOrDefaultAsync(x => x.Id == request.BatchVariantId && x.Batch != null && x.Batch.CompanyId == companyId, cancellationToken);
-        if (variant?.Batch is null) return BadRequest(new { detail = "Select a valid batch color." });
+            .FirstOrDefaultAsync(x => x.Id == request.BatchVariantId && x.Batch != null, cancellationToken);
+        if (variant?.Batch is null)
+        {
+            return BadRequest(new { detail = "Select a valid batch color." });
+        }
+
+        if (!await CanWriteCompanyAsync(variant.Batch.CompanyId, cancellationToken))
+        {
+            return Forbid();
+        }
+
+        var companyId = variant.Batch.CompanyId;
         variant.DecreaseCurrentCount(request.BirdsSold);
         variant.Batch.SyncCountsFromVariants();
         var sale = new BirdSale { CompanyId = companyId, BatchId = variant.BatchId, BatchVariantId = variant.Id, SaleDate = request.SaleDate, BuyerName = request.CustomerName.Trim(), BirdType = variant.Batch.BirdType, BirdsSold = request.BirdsSold, PricePerBird = request.PricePerBird, Notes = request.Notes };
@@ -182,10 +342,72 @@ public sealed class SalesController(ApplicationDbContext dbContext, UserManager<
         dbContext.BirdSales.Add(sale);
         await dbContext.SaveChangesAsync(cancellationToken);
         await notifier.NotifyCompanyAsync(companyId, "Bird sale recorded", $"{DisplayName(user)} recorded a bird sale to {sale.BuyerName}: {sale.BirdsSold:N0} birds from batch {variant.Batch.BatchNumber} for GHS {sale.TotalAmount:N2}.", user.Id, DisplayName(user), targetType: "sales", targetId: sale.Id, cancellationToken: cancellationToken);
+        await WriteSalesAuditIfNeededAsync("Create", "BirdSale", sale.BuyerName, $"Recorded bird sale for GHS {sale.TotalAmount:N2}.", sale.Id, companyId, cancellationToken);
         return Ok(new { sale.Id, sale.BuyerName, sale.SaleDate, sale.BirdsSold, sale.PricePerBird, sale.TotalAmount });
     }
 
-    private async Task<Guid?> CompanyIdAsync() => (await UserAsync())?.CompanyId;
+    private async Task<bool> CanWriteCompanyAsync(Guid resourceCompanyId, CancellationToken cancellationToken)
+    {
+        if (PermissionHelpers.IsSystemAdmin(User))
+        {
+            return true;
+        }
+
+        var user = await UserAsync();
+        return user?.CompanyId == resourceCompanyId;
+    }
+
+    private async Task<Guid?> ResolveCompanyIdAsync(Guid? requestedCompany, CancellationToken cancellationToken)
+    {
+        if (PermissionHelpers.IsSystemAdmin(User))
+        {
+            return requestedCompany;
+        }
+
+        var user = await UserAsync();
+        if (user?.CompanyId is not Guid companyId)
+        {
+            return null;
+        }
+
+        if (requestedCompany.HasValue && requestedCompany.Value != companyId)
+        {
+            return null;
+        }
+
+        return companyId;
+    }
+
+    private async Task WriteSalesAuditIfNeededAsync(
+        string action,
+        string targetType,
+        string targetName,
+        string detail,
+        Guid targetId,
+        Guid companyId,
+        CancellationToken cancellationToken)
+    {
+        if (!PermissionHelpers.IsSystemAdmin(User) || PermissionHelpers.IsSuperAdmin(User))
+        {
+            return;
+        }
+
+        var companyName = await dbContext.Companies.AsNoTracking()
+            .Where(x => x.Id == companyId)
+            .Select(x => x.Name)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            action,
+            "Operations",
+            targetType,
+            targetName,
+            detail,
+            targetId,
+            companyId,
+            companyName,
+            cancellationToken: cancellationToken);
+    }
 
     private async Task<ApplicationUser?> UserAsync()
     {

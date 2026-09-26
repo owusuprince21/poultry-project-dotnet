@@ -10,6 +10,7 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
 
 <PageTitle>System Users</PageTitle>
 
@@ -77,6 +78,10 @@ else
             <MudItem xs="12" lg="8">
                 <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
                     <MudText Typo="Typo.h6" Class="mb-3">System Administrators</MudText>
+                    <TableExportBar Title="System administrators"
+                                    FileName="system-users"
+                                    Disabled="@(!_systemUsers.Any())"
+                                    GetPayload="BuildExportPayload" />
                     <MudTable Items="_systemUsers" Dense="true" Hover="true" RowsPerPage="10">
                         <HeaderContent>
                             <MudTh>Name</MudTh>
@@ -124,7 +129,7 @@ else
                             <MudText Typo="Typo.body2" Color="Color.Secondary">No system users found.</MudText>
                         </NoRecordsContent>
                         <PagerContent>
-                            <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                            <TablePager />
                         </PagerContent>
                     </MudTable>
                 </MudPaper>
@@ -242,8 +247,13 @@ else
         }
     }
 
-    private void BeginEdit(ManagedUser user)
+    private async Task BeginEdit(ManagedUser user)
     {
+        if (!await TableActionConfirm.ConfirmAsync("edit", UserFullName(user)))
+        {
+            return;
+        }
+
         _editingUser = user;
         _systemForm = new CreateSystemUserModel
         {
@@ -263,6 +273,12 @@ else
 
     private async Task ToggleStatusAsync(ManagedUser user)
     {
+        var actionLabel = user.IsActive ? "block" : "activate";
+        if (!await TableActionConfirm.ConfirmAsync(actionLabel, UserFullName(user)))
+        {
+            return;
+        }
+
         try
         {
             var client = CreateApiClient();
@@ -285,6 +301,11 @@ else
 
     private async Task DeleteUserAsync(ManagedUser user)
     {
+        if (!await TableActionConfirm.ConfirmAsync("delete", UserFullName(user)))
+        {
+            return;
+        }
+
         try
         {
             var client = CreateApiClient();
@@ -313,6 +334,22 @@ else
         var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
         return client;
+    }
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Name", "Username", "Email", "Role", "Status", "Password" };
+        var rows = _systemUsers.Select(x => (IReadOnlyList<string>)
+        [
+            UserFullName(x),
+            x.Username,
+            x.Email ?? "Not provided",
+            DisplayRole(x.Role),
+            x.IsActive ? "Active" : "Blocked",
+            x.MustChangePassword ? "Must change" : "Changed"
+        ]).ToList();
+
+        return new TableExportPayload("System Administrators", headers, rows, $"Exported {DateTime.Now:g}");
     }
 
     private static string UserFullName(ManagedUser user)

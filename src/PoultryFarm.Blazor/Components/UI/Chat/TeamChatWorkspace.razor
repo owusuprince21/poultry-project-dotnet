@@ -52,7 +52,7 @@
                         </div>
                         <div class="chat-contact-main">
                             <div class="chat-contact-name">@DisplayName(contact)</div>
-                            <div class="chat-contact-meta">@DisplayRole(contact.Role)@CompanySuffix(contact)</div>
+                            <div class="chat-contact-meta">@ContactMeta(contact)</div>
                             @if (IsTyping(contact.Id))
                             {
                                 <div class="chat-contact-preview typing">Typing...</div>
@@ -90,7 +90,15 @@
                 </div>
                 <div>
                     <MudText Typo="Typo.subtitle1" Class="font-semibold">@DisplayName(_selectedContact)</MudText>
-                    <MudText Typo="Typo.caption" Color="Color.Secondary">@DisplayRole(_selectedContact.Role)@CompanySuffix(_selectedContact) • @LastSeenText(_selectedContact)</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@ThreadHeaderSubtitle(_selectedContact)</MudText>
+                    @if (!string.IsNullOrWhiteSpace(_selectedContact.Email) || !string.IsNullOrWhiteSpace(_selectedContact.Phone))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@ContactDetailsLine(_selectedContact)</MudText>
+                    }
+                    @if (_selectedContact.Role == "marketplace_buyer" && !_selectedContact.CanReply)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Warning">Read-only · Farm handles replies</MudText>
+                    }
                 </div>
             </div>
 
@@ -123,22 +131,22 @@
                                         <small>@TrimPreview(message.ReplyPreview)</small>
                                     </button>
                                 }
-                                <MudText Typo="Typo.body2">@message.Body</MudText>
+                                <MudText Typo="Typo.body2" Class="@(ChatEmojiSizing.ShouldEnlarge(message.Body) ? "chat-emoji-lg" : null)">@message.Body</MudText>
                                 <div class="chat-message-meta">
                                     <MudText Typo="Typo.caption" Color="Color.Secondary">@message.SentAt.LocalDateTime.ToString("MMM d, h:mm tt")</MudText>
                                     @if (message.EditedAt.HasValue)
                                     {
                                         <MudText Typo="Typo.caption" Color="Color.Secondary">edited</MudText>
                                     }
-                                    <MudIconButton Icon="@Icons.Material.Filled.Reply" Size="Size.Small" Color="Color.Default" OnClick="@(() => StartReply(message))" />
-                                    @if (message.CanEdit || message.CanDelete)
+                                    <MudIconButton Icon="@Icons.Material.Filled.Reply" Size="Size.Small" Color="Color.Default" OnClick="@(() => StartReplyAsync(message))" />
+                                    @if (CanEditNow(message) || CanDeleteNow(message))
                                     {
                                         <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" Size="Size.Small" Class="chat-message-menu">
-                                            @if (message.CanEdit)
+                                            @if (CanEditNow(message))
                                             {
-                                                <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => StartEdit(message))">Edit</MudMenuItem>
+                                                <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => StartEditAsync(message))">Edit</MudMenuItem>
                                             }
-                                            @if (message.CanDelete)
+                                            @if (CanDeleteNow(message))
                                             {
                                                 <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteMessageAsync(message))">Delete</MudMenuItem>
                                             }
@@ -180,6 +188,8 @@
                 }
             </div>
 
+            @if (_selectedContact.CanReply)
+            {
             <div class="chat-compose-row">
                 @if (_replyTo is not null)
                 {
@@ -241,6 +251,7 @@
                 }
                 <div class="chat-compose-control">
                     <MudTextField T="string"
+                                  @ref="_composerField"
                                   Value="_message"
                                   ValueChanged="OnMessageChanged"
                                   Placeholder="Type a message"
@@ -265,6 +276,7 @@
                     </div>
                 </div>
             </div>
+            }
     </div>
     }
 </div>
@@ -283,6 +295,7 @@
     private readonly Dictionary<Guid, DateTimeOffset> _lastActivityByContact = [];
     private readonly Dictionary<Guid, string> _typingByContact = [];
     private ElementReference _messagesContainer;
+    private MudTextField<string>? _composerField;
     private string _message = string.Empty;
     private string _search = string.Empty;
     private TeamChatMessage? _replyTo;
@@ -300,6 +313,7 @@
     private bool _contactsLoaded;
     private bool _emojisLoading;
 
+    private static readonly TimeSpan MessageActionWindow = TimeSpan.FromMinutes(10);
     private static readonly string[] QuickReactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
     private static readonly string[] FallbackEmojiValues =
     [
@@ -329,7 +343,7 @@
         {
             "worker" => "Workers can chat with colleagues and farm admins in their company.",
             "farm_admin" => "Farm admins can chat with workers in their farm and system admins.",
-            "super_admin" or "sub_admin" or "system_admin" => "System admins can chat with all users across the platform.",
+            "super_admin" or "sub_admin" or "system_admin" => "Chat with farm admins, and view marketplace buyer contacts by farm.",
             _ => "Role-scoped messaging."
         };
 
@@ -721,11 +735,70 @@
             "system_admin" => "System Admin",
             "farm_admin" => "Farm Admin",
             "worker" => "Worker",
+            "marketplace_buyer" => "Marketplace Buyer",
             _ => role
         };
 
     private static string CompanySuffix(ChatContact contact) =>
         string.IsNullOrWhiteSpace(contact.CompanyName) ? string.Empty : $" • {contact.CompanyName}";
+
+    private static string ContactMeta(ChatContact contact)
+    {
+        if (contact.Role == "marketplace_buyer")
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(contact.CompanyName))
+            {
+                parts.Add(contact.CompanyName);
+            }
+
+            if (!string.IsNullOrWhiteSpace(contact.ListingTitle))
+            {
+                parts.Add($"Listing · {contact.ListingTitle}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(contact.Email))
+            {
+                parts.Add(contact.Email);
+            }
+
+            if (!string.IsNullOrWhiteSpace(contact.Phone))
+            {
+                parts.Add(contact.Phone);
+            }
+
+            if (parts.Count > 0)
+            {
+                return string.Join(" · ", parts);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(contact.ListingTitle))
+        {
+            return $"Listing · {contact.ListingTitle}";
+        }
+
+        return $"{DisplayRole(contact.Role)}{CompanySuffix(contact)}";
+    }
+
+    private static string ThreadHeaderSubtitle(ChatContact contact) =>
+        $"{DisplayRole(contact.Role)}{CompanySuffix(contact)} • {LastSeenText(contact)}";
+
+    private static string ContactDetailsLine(ChatContact contact)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(contact.Email))
+        {
+            parts.Add(contact.Email);
+        }
+
+        if (!string.IsNullOrWhiteSpace(contact.Phone))
+        {
+            parts.Add(contact.Phone);
+        }
+
+        return string.Join(" · ", parts);
+    }
 
     private static string LastSeenText(ChatContact contact)
     {
@@ -772,7 +845,10 @@
         return DisplayName(contact).Contains(term, StringComparison.OrdinalIgnoreCase) ||
                contact.Username.Contains(term, StringComparison.OrdinalIgnoreCase) ||
                contact.Role.Contains(term, StringComparison.OrdinalIgnoreCase) ||
-               (contact.CompanyName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false);
+               (contact.CompanyName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+               (contact.Email?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+               (contact.Phone?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+               (contact.ListingTitle?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false);
     }
 
     private int UnreadCount(Guid contactId) =>
@@ -806,16 +882,40 @@
         }
     }
 
-    private void StartReply(TeamChatMessage message)
+    private async Task StartReplyAsync(TeamChatMessage message)
     {
         _editingMessage = null;
         _replyTo = message;
+        await InvokeAsync(StateHasChanged);
+        await FocusComposerAsync();
     }
 
     private void ClearReply()
     {
         _replyTo = null;
     }
+
+    private async Task FocusComposerAsync()
+    {
+        if (_composerField is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _composerField.FocusAsync();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private static bool CanEditNow(TeamChatMessage message) =>
+        message.IsMine && DateTimeOffset.UtcNow - message.SentAt <= MessageActionWindow;
+
+    private static bool CanDeleteNow(TeamChatMessage message) =>
+        message.IsMine && DateTimeOffset.UtcNow - message.SentAt <= MessageActionWindow;
 
     private void AddEmoji(string emoji)
     {
@@ -868,9 +968,9 @@
         return string.IsNullOrWhiteSpace(emoji.Group) ? title : $"{title} • {emoji.Group}";
     }
 
-    private void StartEdit(TeamChatMessage message)
+    private async Task StartEditAsync(TeamChatMessage message)
     {
-        if (!message.CanEdit)
+        if (!CanEditNow(message))
         {
             Snackbar.Add("Messages can only be edited within the first 10 minutes.", Severity.Warning);
             return;
@@ -879,6 +979,8 @@
         _replyTo = null;
         _editingMessage = message;
         _message = message.Body;
+        await InvokeAsync(StateHasChanged);
+        await FocusComposerAsync();
     }
 
     private void CancelEdit()
@@ -925,8 +1027,9 @@
 
     private async Task DeleteMessageAsync(TeamChatMessage message)
     {
-        if (!message.CanDelete)
+        if (!CanDeleteNow(message))
         {
+            Snackbar.Add("Messages can only be deleted within the first 10 minutes.", Severity.Warning);
             return;
         }
 

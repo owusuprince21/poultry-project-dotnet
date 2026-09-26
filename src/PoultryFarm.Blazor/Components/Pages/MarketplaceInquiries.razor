@@ -1,0 +1,135 @@
+@page "/marketplace/inquiries"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Shared
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
+
+<PageTitle>Marketplace Inquiries</PageTitle>
+
+@if (!_loaded)
+{
+    <PageLoader Message="Loading inquiries..." />
+}
+else if (!AuthSession.IsFarmAdmin && !AuthSession.IsSystemAdmin && !AuthSession.CanAccessPage("marketplace"))
+{
+    <ModulePageShell Title="Marketplace Inquiries" Subtitle="Buyer interest from the public marketplace.">
+        <ModuleStatusPanel Title="Restricted" Description="Farm admins and workers with marketplace access can manage inquiries." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Marketplace Inquiries" Subtitle="Respond to buyer interest from the marketplace catalog.">
+        <MudPaper Class="pa-4 rounded-lg border border-slate-200" Elevation="0">
+            <TableExportBar Title="Inquiries"
+                            FileName="marketplace-inquiries"
+                            Disabled="@(!_inquiries.Any())"
+                            GetPayload="BuildExportPayload" />
+            <MudTable Items="_inquiries" Dense="true" Hover="true" RowsPerPage="10">
+                <HeaderContent>
+                    <MudTh>Listing</MudTh>
+                    <MudTh>Buyer</MudTh>
+                    <MudTh>Message</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.ListingTitle</MudTd>
+                    <MudTd>
+                        <div>@context.BuyerName</div>
+                        <MudText Typo="Typo.caption">@context.BuyerEmail @context.BuyerPhone</MudText>
+                    </MudTd>
+                    <MudTd>@context.Message</MudTd>
+                    <MudTd>@context.Status</MudTd>
+                    <MudTd>
+                        <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                            <MudMenuItem Icon="@Icons.Material.Filled.Call" OnClick="@(() => SetStatusAsync(context, "Contacted"))">Mark contacted</MudMenuItem>
+                            <MudMenuItem Icon="@Icons.Material.Filled.CheckCircle" OnClick="@(() => SetStatusAsync(context, "Closed"))">Close</MudMenuItem>
+                        </MudMenu>
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText>No inquiries yet.</MudText>
+                </NoRecordsContent>
+                <PagerContent>
+                    <TablePager />
+                </PagerContent>
+            </MudTable>
+        </MudPaper>
+    </ModulePageShell>
+}
+
+@code {
+    private bool _loaded;
+    private List<InquiryRow> _inquiries = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated) { Navigation.NavigateTo("/", replace: true); return; }
+        if (AuthSession.MustChangePassword) { Navigation.NavigateTo("/force-password-change", replace: true); return; }
+        if (AuthSession.IsFarmAdmin || AuthSession.IsSystemAdmin) await LoadAsync();
+        _loaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        var client = CreateApiClient();
+        _inquiries = await client.GetFromJsonAsync<List<InquiryRow>>("/api/marketplace/farm/inquiries") ?? [];
+    }
+
+    private async Task SetStatusAsync(InquiryRow inquiry, string status)
+    {
+        var label = status == "Closed" ? "close" : "mark as contacted";
+        if (!await TableActionConfirm.ConfirmAsync(label, inquiry.BuyerName))
+        {
+            return;
+        }
+
+        var client = CreateApiClient();
+        var response = await client.PutAsJsonAsync($"/api/marketplace/farm/inquiries/{inquiry.Id}/status", new { status });
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Listing", "Buyer", "Email", "Phone", "Message", "Status" };
+        var rows = _inquiries.Select(x => (IReadOnlyList<string>)
+        [
+            x.ListingTitle,
+            x.BuyerName,
+            x.BuyerEmail ?? string.Empty,
+            x.BuyerPhone ?? string.Empty,
+            x.Message,
+            x.Status
+        ]).ToList();
+
+        return new TableExportPayload("Marketplace Inquiries", headers, rows, $"Exported {DateTime.Now:g}");
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private sealed record InquiryRow(
+        Guid Id, Guid ListingId, string ListingTitle, string BuyerName, string? BuyerEmail, string? BuyerPhone,
+        string Message, decimal? QuantityRequested, string Status, string? FarmResponseNotes, DateTimeOffset CreatedAt);
+}

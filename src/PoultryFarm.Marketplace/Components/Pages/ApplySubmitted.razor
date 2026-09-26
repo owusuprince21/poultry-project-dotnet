@@ -1,0 +1,48 @@
+@page "/apply/submitted"
+@layout PoultryFarm.Marketplace.Components.Layout.AuthSplitLayout
+
+@inject IConfiguration Configuration
+
+<main class="login-page">
+    <section class="login-visual">
+        <div class="login-shade">
+            <img src="/logos/akoko-papa-icon.svg" alt="Akokɔ Papa logo" class="login-logo" />
+            <h1 class="login-title">Application received</h1>
+            <p class="login-copy">
+                Thanks for applying to sell with Akokɔ Papa. Our team reviews every farm before access is granted.
+            </p>
+        </div>
+    </section>
+
+    <section class="login-panel">
+        <div class="login-card">
+            <div class="submitted-badge" aria-hidden="true">✓</div>
+            <h2 class="login-card-title">Submission successful</h2>
+            <p class="login-card-subtitle">
+                Your farm registration is under review.
+            </p>
+
+            <div class="notice submitted-notice">
+                <p>
+                    Our team will review your application. Once it is approved, you will receive an
+                    email at the address you provided with an invitation link to set your password and
+                    sign in to the farm dashboard.
+                </p>
+                <p>
+                    Please check your inbox (and spam folder) after approval. The invitation link is how
+                    you complete login setup.
+
+                    Approval usually takes 1-2 business days.
+                </p>
+            </div>
+
+            <p class="login-footer-links">
+                <a href="/">Back to marketplace</a>
+                <span>·</span>
+                <a href="/apply">Submit another application</a>
+                <span>·</span>
+                <a href="@(Configuration["Apps:FarmBlazorBaseUrl"] ?? "http://localhost:5083")">Farm dashboard</a>
+            </p>
+        </div>
+    </section>
+</main>

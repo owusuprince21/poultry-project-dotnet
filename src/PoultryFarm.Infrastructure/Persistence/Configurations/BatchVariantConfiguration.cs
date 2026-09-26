@@ -13,6 +13,5 @@ public sealed class BatchVariantConfiguration : IEntityTypeConfiguration<BatchVa
         builder.Property(x => x.Color).HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.Notes).HasMaxLength(255);
         builder.HasIndex(x => new { x.BatchId, x.Color }).IsUnique();
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }

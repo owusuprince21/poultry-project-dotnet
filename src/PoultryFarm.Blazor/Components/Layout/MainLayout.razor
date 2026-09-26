@@ -12,6 +12,7 @@
 @inject NavigationManager Navigation
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
+@inject NavBadgeState NavBadgeState
 
 <MudThemeProvider Theme="_theme" />
 <MudPopoverProvider />
@@ -36,7 +37,7 @@
         </MudText>
 
         <div class="topbar-notification-anchor">
-            <button type="button" class="topbar-icon-button" @onclick="ToggleNotifications">
+            <button type="button" class="topbar-icon-button" @onclick="ToggleNotifications" @onclick:stopPropagation="true">
                 <MudBadge Content="@_notificationCount"
                           Visible="@(_notificationCount > 0)"
                           Color="Color.Error"
@@ -46,12 +47,17 @@
                 </MudBadge>
             </button>
 
+            @if (_notificationsOpen)
+            {
+                <div class="notification-clickaway" @onclick="CloseNotifications" @onmousedown:preventDefault="true"></div>
+            }
+
             <MudPopover Open="@_notificationsOpen"
                         AnchorOrigin="Origin.BottomRight"
                         TransformOrigin="Origin.TopRight"
                         Class="notification-popover"
                         Elevation="8">
-                <div class="notification-panel">
+                <div class="notification-panel" @onclick:stopPropagation="true">
                     <div class="notification-panel-header">
                         <div>
                             <MudText Typo="Typo.subtitle2" Class="font-semibold">@(_selectedNotification is null ? "Notifications" : "Notification Detail")</MudText>
@@ -170,7 +176,7 @@
     </MudDrawer>
 
     <MudMainContent Class="main-content">
-        <PoultryFarm.Blazor.Components.UI.Shared.IdleLogout TimeoutMilliseconds="180000" />
+        <PoultryFarm.Blazor.Components.UI.Shared.IdleLogout />
         @Body
         @if (AuthSession.IsAuthenticated)
         {
@@ -281,6 +287,7 @@
         Navigation.LocationChanged += HandleLocationChanged;
         await LoadNotificationsAsync();
         await LoadUnreadChatSummaryAsync();
+        await LoadPendingFarmerRegistrationBadgeAsync();
         await ConnectHubAsync();
 
         await InvokeAsync(StateHasChanged);
@@ -302,7 +309,7 @@
         {
             "worker" => "Chat with workers and farm admins in your company.",
             "farm_admin" => "Chat with your workers and system admins for escalation.",
-            "super_admin" or "sub_admin" or "system_admin" => "Chat with farm admins across companies.",
+            "super_admin" or "sub_admin" or "system_admin" => "Chat with farm admins, and view marketplace buyer contacts by farm.",
             _ => "Role-scoped team messaging."
         };
 
@@ -344,6 +351,14 @@
             return;
         }
 
+        if (string.Equals(notification.TargetType, "farmer_registration", StringComparison.OrdinalIgnoreCase))
+        {
+            _notificationsOpen = false;
+            _selectedNotification = null;
+            Navigation.NavigateTo("/farmer-registrations");
+            return;
+        }
+
         _selectedNotification = notification;
     }
 
@@ -365,6 +380,12 @@
         {
             _selectedNotification = null;
         }
+    }
+
+    private void CloseNotifications()
+    {
+        _notificationsOpen = false;
+        _selectedNotification = null;
     }
 
     private Task OnChatWorkspaceMessage(TeamChatMessage message)
@@ -464,6 +485,11 @@
                 UpsertNotification(appNotification);
                 _notificationCount = NotificationUnreadCount();
 
+                if (string.Equals(notification.TargetType, "farmer_registration", StringComparison.OrdinalIgnoreCase))
+                {
+                    NavBadgeState.IncrementPendingFarmerRegistrations();
+                }
+
                 if (appNotification.Kind != NotificationKind.Chat)
                 {
                     Snackbar.Add(notification.Title, Severity.Info, options =>
@@ -486,6 +512,26 @@
         catch (Exception ex)
         {
             Console.WriteLine(ex);
+        }
+    }
+
+    private async Task LoadPendingFarmerRegistrationBadgeAsync()
+    {
+        if (!AuthSession.IsSuperAdmin || string.IsNullOrWhiteSpace(AuthSession.Token))
+        {
+            NavBadgeState.SetPendingFarmerRegistrations(0);
+            return;
+        }
+
+        try
+        {
+            var client = CreateApiClient();
+            var payload = await client.GetFromJsonAsync<PendingCountDto>("/api/marketplace/registrations/pending-count");
+            NavBadgeState.SetPendingFarmerRegistrations(payload?.Count ?? 0);
+        }
+        catch
+        {
+            // Badge is best-effort; ignore transient API failures.
         }
     }
 
@@ -734,6 +780,8 @@
     private sealed record ActivityNotification(Guid Id, string Title, string Detail, DateTimeOffset At, string? ActorName, string? Kind, string? TargetType, Guid? TargetId);
 
     private sealed record AppNotificationDto(Guid Id, string Title, string ActorName, string Detail, string Kind, string? TargetType, Guid? TargetId, DateTimeOffset SentAt, DateTimeOffset? ReadAt);
+
+    private sealed record PendingCountDto(int Count);
 
     private sealed class AppNotification(
         Guid id,

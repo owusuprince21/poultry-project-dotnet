@@ -7,6 +7,7 @@ public static class AppRoles
     public const string SystemAdmin = "system_admin";
     public const string FarmAdmin = "farm_admin";
     public const string Worker = "worker";
+    public const string MarketplaceBuyer = "marketplace_buyer";
 
     public static string Normalize(string? role)
     {
@@ -36,6 +37,10 @@ public static class AppRoles
             "farmworker" => Worker,
             "farm_worker" => Worker,
             "worker" => Worker,
+
+            "marketplacebuyer" => MarketplaceBuyer,
+            "marketplace_buyer" => MarketplaceBuyer,
+            "buyer" => MarketplaceBuyer,
 
             _ => normalized
         };

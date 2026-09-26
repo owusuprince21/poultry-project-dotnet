@@ -1,0 +1,222 @@
+@page "/farms"
+@page "/companies"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Shared
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Farms</PageTitle>
+
+@if (!_loaded)
+{
+    <PageLoader Message="Loading farms..." />
+}
+else if (!AuthSession.IsSuperAdmin)
+{
+    <ModulePageShell Title="Farms" Subtitle="This workspace is available to super admins only.">
+        <ModuleStatusPanel Title="Restricted workspace" Description="Farm directory is reserved for super administrators." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Farms" Subtitle="Approved farms registered through marketplace invitations. Farms are created when registrations are approved.">
+        <MudGrid Spacing="3">
+            <MudItem xs="12">
+                <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                        <div>
+                            <MudText Typo="Typo.h6">Farm register</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">@_companies.Count farm@(_companies.Count == 1 ? "" : "s") on the platform</MudText>
+                        </div>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Href="/farmer-registrations" StartIcon="@Icons.Material.Filled.HowToReg">
+                            Farm registrations
+                        </MudButton>
+                    </MudStack>
+                    <TableExportBar Title="Farm register"
+                                    FileName="farms"
+                                    Disabled="@(!_companies.Any())"
+                                    GetPayload="BuildExportPayload" />
+                    <MudTable Items="_companies" Dense="true" Hover="true" Bordered="false" RowsPerPage="10">
+                        <HeaderContent>
+                            <MudTh>Farm</MudTh>
+                            <MudTh>Code</MudTh>
+                            <MudTh>Contact</MudTh>
+                            <MudTh>Location</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Users</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Farm">@context.Name</MudTd>
+                            <MudTd DataLabel="Code">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.Code</MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="Contact">@FarmContact(context)</MudTd>
+                            <MudTd DataLabel="Location">@(string.IsNullOrWhiteSpace(context.Address) ? "—" : context.Address)</MudTd>
+                            <MudTd DataLabel="Status">
+                                <MudChip T="string"
+                                         Size="Size.Small"
+                                         Color="@(context.IsActive ? Color.Success : Color.Error)"
+                                         Variant="Variant.Outlined">
+                                    @(context.IsActive ? "Active" : "Inactive")
+                                </MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="Users">@UserCount(context.Id).ToString("N0")</MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">No farms yet. Approve a farmer registration to create the first farm.</MudText>
+                        </NoRecordsContent>
+                        <PagerContent>
+                            <TablePager />
+                        </PagerContent>
+                    </MudTable>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12">
+                <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
+                    <MudText Typo="Typo.h6" Class="mb-3">Users by farm</MudText>
+                    @if (UsersByFarm.Any())
+                    {
+                        <MudExpansionPanels MultiExpansion="true">
+                            @foreach (var group in UsersByFarm)
+                            {
+                                <MudExpansionPanel Text="@($"{group.Key} ({group.Count()} users)")">
+                                    <MudTable Items="group" Dense="true" Hover="true" RowsPerPage="10">
+                                        <HeaderContent>
+                                            <MudTh>User</MudTh>
+                                            <MudTh>Username</MudTh>
+                                            <MudTh>Role</MudTh>
+                                            <MudTh>First Login</MudTh>
+                                        </HeaderContent>
+                                        <RowTemplate>
+                                            <MudTd DataLabel="User">@UserFullName(context)</MudTd>
+                                            <MudTd DataLabel="Username">@context.Username</MudTd>
+                                            <MudTd DataLabel="Role">@DisplayRole(context.Role)</MudTd>
+                                            <MudTd DataLabel="First Login">@(context.MustChangePassword ? "Password change required" : "Completed")</MudTd>
+                                        </RowTemplate>
+                                        <PagerContent>
+                                            <TablePager />
+                                        </PagerContent>
+                                    </MudTable>
+                                </MudExpansionPanel>
+                            }
+                        </MudExpansionPanels>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">No farm users yet.</MudText>
+                    }
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </ModulePageShell>
+}
+
+@code {
+    private List<ManagedCompany> _companies = [];
+    private List<ManagedUser> _users = [];
+    private bool _loaded;
+
+    private IEnumerable<IGrouping<string, ManagedUser>> UsersByFarm =>
+        _users
+            .Where(x => !string.IsNullOrWhiteSpace(x.CompanyName))
+            .GroupBy(x => x.CompanyName!)
+            .OrderBy(x => x.Key);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await AuthSession.LoadAsync();
+
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (AuthSession.MustChangePassword)
+        {
+            Navigation.NavigateTo("/force-password-change", replace: true);
+            return;
+        }
+
+        if (AuthSession.IsSuperAdmin)
+        {
+            await LoadAsync();
+        }
+
+        _loaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        var client = CreateApiClient();
+        try
+        {
+            _companies = await client.GetFromJsonAsync<List<ManagedCompany>>("/api/companies") ?? [];
+            _users = await client.GetFromJsonAsync<List<ManagedUser>>("/api/users") ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "Farms could not be loaded.", client.BaseAddress), Severity.Error);
+        }
+    }
+
+    private int UserCount(Guid companyId) =>
+        _users.Count(x => x.CompanyId == companyId);
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private static string FarmContact(ManagedCompany company) =>
+        new[] { company.Email, company.Phone }.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "Not provided";
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Name", "Code", "Email", "Phone", "Address", "Active" };
+        var rows = _companies.Select(x => (IReadOnlyList<string>)
+        [
+            x.Name,
+            x.Code,
+            x.Email ?? string.Empty,
+            x.Phone ?? string.Empty,
+            x.Address ?? string.Empty,
+            x.IsActive ? "Active" : "Inactive"
+        ]).ToList();
+
+        return new TableExportPayload("Farms", headers, rows, $"Exported {DateTime.Now:g}");
+    }
+
+    private static string UserFullName(ManagedUser user)
+    {
+        var fullName = $"{user.FirstName} {user.LastName}".Trim();
+        return string.IsNullOrWhiteSpace(fullName) ? user.Username : fullName;
+    }
+
+    private static string DisplayRole(string role) =>
+        role switch
+        {
+            "super_admin" => "Super Admin",
+            "sub_admin" => "Sub Admin",
+            "system_admin" => "System Admin",
+            "farm_admin" => "Farm Admin",
+            "worker" => "Worker",
+            _ => role
+        };
+}

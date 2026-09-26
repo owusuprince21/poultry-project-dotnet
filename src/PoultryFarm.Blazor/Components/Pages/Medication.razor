@@ -1,9 +1,11 @@
 @page "/medication"
 @using System.Net.Http.Headers
+@using PoultryFarm.Blazor.Services
 
 @inject AuthSession AuthSession
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
 @inject NavigationManager Navigation
 
 <PageTitle>Medication</PageTitle>
@@ -62,7 +64,12 @@
                     <MudTabPanel Text="Schedule records" Icon="@Icons.Material.Filled.EventAvailable" />
                 </MudTabs>
 
-                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading" Class="mt-3">
+                <TableExportBar Title="@(_tableTab == 0 ? "Daily medication records" : "Schedule records")"
+                                FileName="@(_tableTab == 0 ? "medication-daily" : "medication-schedule")"
+                                Disabled="@(!_records.Any())"
+                                GetPayload="BuildExportPayload"
+                                Class="mt-3 mb-2" />
+                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading" RowsPerPage="10">
                     <HeaderContent>
                         <MudTh>Date</MudTh>
                         <MudTh>Batch</MudTh>
@@ -83,7 +90,7 @@
                         <MudTd>
                             @if (context.Status != 1)
                             {
-                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                                     <MudMenuItem Icon="@Icons.Material.Filled.TaskAlt" OnClick="@(() => CompleteAsync(context.Id))">Mark as complete</MudMenuItem>
                                 </MudMenu>
                             }
@@ -210,6 +217,11 @@
 
     private async Task CompleteAsync(Guid id)
     {
+        if (!await TableActionConfirm.ConfirmAsync("mark this medication as complete"))
+        {
+            return;
+        }
+
         var response = await CreateApiClient().PostAsync($"/api/medication/{id}/complete", null);
         if (!response.IsSuccessStatusCode)
         {
@@ -236,6 +248,24 @@
     private static string DisplayColor(int value) => value switch { 0 => "White", 1 => "Brown", 2 => "Black", 3 => "Speckled", _ => "Mixed" };
     private static string StatusText(int value) => value switch { 1 => "Completed", 2 => "Overdue", _ => "Scheduled" };
     private static Color StatusColor(int value) => value switch { 1 => Color.Success, 2 => Color.Error, _ => Color.Warning };
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var title = _tableTab == 0 ? "Daily Medication Records" : "Medication Schedule Records";
+        var headers = new[] { "Date", "Batch", "Medicine", "Type", "Dosage", "Purpose", "Status" };
+        var rows = _records.Select(x => (IReadOnlyList<string>)
+        [
+            x.Date.ToString("MMM d, yyyy"),
+            x.BatchNumber,
+            x.MedicationName,
+            x.MedicationType,
+            x.Dosage,
+            x.Purpose,
+            StatusText(x.Status)
+        ]).ToList();
+
+        return new TableExportPayload(title, headers, rows, $"Exported {DateTime.Now:g}");
+    }
 
     private sealed record MedicationMetrics(int Scheduled = 0, int Completed = 0, int Alerts = 0);
     private sealed record PagedMedicationResponse(List<MedicationRow> Items, int Total, int Page, int PageSize);

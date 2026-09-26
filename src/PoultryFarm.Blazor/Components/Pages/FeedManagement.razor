@@ -1,14 +1,34 @@
 @page "/feed"
 @using System.Net.Http.Headers
+@using PoultryFarm.Blazor.Services
 
 @inject AuthSession AuthSession
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
 @inject NavigationManager Navigation
 
 <PageTitle>Feed Management</PageTitle>
 
-<ModulePageShell Title="Feed Management" Subtitle="Track feed stock arrivals and daily consumption by batch, bird color, feed type, and bag size.">
+<ModulePageShell Title="Feed Management" Subtitle="@PageSubtitle">
+    @if (AuthSession.IsSystemAdmin)
+    {
+        <MudPaper Elevation="0" Class="work-surface pa-4 mb-4">
+            <MudSelect T="Guid?" Label="Farm" Value="_selectedCompanyId" ValueChanged="OnCompanyChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" Clearable="true">
+                @foreach (var company in _companies)
+                {
+                    <MudSelectItem T="Guid?" Value="@company.Id">@company.Name (@company.Code)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudPaper>
+    }
+
+    @if (RequiresFarmSelection && !_selectedCompanyId.HasValue)
+    {
+        <EmptyState Icon="@Icons.Material.Filled.Agriculture" Title="Select a farm" Description="Choose a farm to view feed stock and consumption." />
+    }
+    else
+    {
     <MudGrid Spacing="3">
         <MudItem xs="12" md="3">
             <DashboardMetricCard Label="Feeds In Stock" Value="@($"{_metrics.TotalBagsInStock:N0}")" Detail="bags remaining" Icon="@Icons.Material.Filled.Inventory2" Color="Color.Success" />
@@ -46,6 +66,8 @@
     </MudPaper>
 
     <MudGrid Spacing="3" Class="mt-1">
+        @if (!AuthSession.IsSuperAdmin)
+        {
         <MudItem xs="12" lg="5">
             <MudPaper Elevation="0" Class="work-surface pa-4">
                 <MudTabs @bind-ActivePanelIndex="_activeTab" Elevation="0" Rounded="true" ApplyEffectsToContainer="true">
@@ -138,8 +160,9 @@
                 </MudTabs>
             </MudPaper>
         </MudItem>
+        }
 
-        <MudItem xs="12" lg="7">
+        <MudItem xs="12" lg="@(AuthSession.IsSuperAdmin ? 12 : 7)">
             <MudPaper Elevation="0" Class="work-surface pa-4">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
                     <div>
@@ -151,7 +174,11 @@
 
                 @if (_activeTab == 0)
                 {
-                    <MudTable Items="_consumptionRows" Dense="true" Hover="true" Loading="_loading" Elevation="0">
+                    <TableExportBar Title="Daily consumption"
+                                    FileName="feed-consumption"
+                                    Disabled="@(!_consumptionRows.Any())"
+                                    GetPayload="BuildConsumptionExportPayload" />
+                    <MudTable Items="_consumptionRows" Dense="true" Hover="true" Loading="_loading" Elevation="0" RowsPerPage="10">
                         <HeaderContent>
                             <MudTh>Date</MudTh>
                             <MudTh>Batch</MudTh>
@@ -167,10 +194,13 @@
                             <MudTd>@context.BagsUsed.ToString("N0") x @context.BagSizeKg kg</MudTd>
                             <MudTd>@context.TotalKg.ToString("N1")</MudTd>
                             <MudTd>
-                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
-                                    <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => EditConsumption(context))">Update</MudMenuItem>
-                                    <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteConsumptionAsync(context.Id))">Delete</MudMenuItem>
-                                </MudMenu>
+                                @if (!AuthSession.IsSuperAdmin)
+                                {
+                                    <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                                        <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => EditConsumption(context))">Update</MudMenuItem>
+                                        <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteConsumptionAsync(context.Id))">Delete</MudMenuItem>
+                                    </MudMenu>
+                                }
                             </MudTd>
                         </RowTemplate>
                     </MudTable>
@@ -178,7 +208,11 @@
                 }
                 else
                 {
-                    <MudTable Items="_stockRows" Dense="true" Hover="true" Loading="_loading" Elevation="0">
+                    <TableExportBar Title="Feed stock"
+                                    FileName="feed-stock"
+                                    Disabled="@(!_stockRows.Any())"
+                                    GetPayload="BuildStockExportPayload" />
+                    <MudTable Items="_stockRows" Dense="true" Hover="true" Loading="_loading" Elevation="0" RowsPerPage="10">
                         <HeaderContent>
                             <MudTh>Date</MudTh>
                             <MudTh>Feed</MudTh>
@@ -194,10 +228,13 @@
                             <MudTd>@context.BagsRemaining.ToString("N0") / @context.BagsIn.ToString("N0") bags</MudTd>
                             <MudTd>GHS @context.TotalCost.ToString("N2")</MudTd>
                             <MudTd>
-                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
-                                    <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => EditStock(context))">Update</MudMenuItem>
-                                    <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteStockAsync(context.Id))">Delete</MudMenuItem>
-                                </MudMenu>
+                                @if (!AuthSession.IsSuperAdmin)
+                                {
+                                    <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                                        <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => EditStock(context))">Update</MudMenuItem>
+                                        <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteStockAsync(context.Id))">Delete</MudMenuItem>
+                                    </MudMenu>
+                                }
                             </MudTd>
                         </RowTemplate>
                     </MudTable>
@@ -206,6 +243,7 @@
             </MudPaper>
         </MudItem>
     </MudGrid>
+    }
 </ModulePageShell>
 
 @code {
@@ -216,6 +254,14 @@
     private List<FeedConsumptionRow> _consumptionRows = [];
     private List<FeedStockRow> _stockRows = [];
     private FeedMetrics _metrics = new();
+    private List<ManagedCompany> _companies = [];
+    private Guid? _selectedCompanyId;
+
+    private bool RequiresFarmSelection => AuthSession.IsSystemAdmin;
+    private string PageSubtitle => AuthSession.IsSuperAdmin
+        ? "Read-only farm overview"
+        : "Track feed stock arrivals and daily consumption by batch, bird color, feed type, and bag size.";
+    private string CompanyQuery => AuthSession.IsSystemAdmin && _selectedCompanyId.HasValue ? $"company={_selectedCompanyId.Value}" : string.Empty;
     private Guid? _selectedBatchId;
     private Guid? _selectedVariantId;
     private DateTime? _consumptionDate = DateTime.Today;
@@ -252,22 +298,68 @@
             return;
         }
 
+        if (AuthSession.IsSystemAdmin)
+        {
+            await LoadCompaniesAsync();
+            return;
+        }
+
         await LoadAsync();
+    }
+
+    private async Task LoadCompaniesAsync()
+    {
+        try
+        {
+            _companies = await CreateApiClient().GetFromJsonAsync<List<ManagedCompany>>("/api/companies") ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Companies could not load: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task OnCompanyChanged(Guid? companyId)
+    {
+        _selectedCompanyId = companyId;
+        _consumptionPage = 1;
+        _stockPage = 1;
+        if (companyId.HasValue)
+        {
+            await LoadAsync();
+        }
+        else
+        {
+            _batches = [];
+            _feedConfigurations = [];
+            _consumptionRows = [];
+            _stockRows = [];
+            _metrics = new();
+            _consumptionTotal = _stockTotal = 0;
+        }
     }
 
     private async Task LoadAsync()
     {
+        if (RequiresFarmSelection && !_selectedCompanyId.HasValue)
+        {
+            return;
+        }
+
         _loading = true;
         try
         {
             var client = CreateApiClient();
-            _batches = await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [];
-            _feedConfigurations = (await client.GetFromJsonAsync<FeedOptions>("/api/feed/options"))?.Configurations ?? [];
-            _metrics = await client.GetFromJsonAsync<FeedMetrics>($"/api/feed/metrics{(_selectedBatchId.HasValue ? $"?batchId={_selectedBatchId}" : string.Empty)}") ?? new();
-            var consumption = await client.GetFromJsonAsync<PagedConsumptionResponse>($"/api/feed/consumptions?page={_consumptionPage}&pageSize={PageSize}");
+            _batches = await client.GetFromJsonAsync<List<BatchOption>>(WithCompany("/api/batches/active")) ?? [];
+            _feedConfigurations = (await client.GetFromJsonAsync<FeedOptions>(WithCompany("/api/feed/options")))?.Configurations ?? [];
+            var metricsPath = _selectedBatchId.HasValue
+                ? $"/api/feed/metrics?batchId={_selectedBatchId}"
+                : "/api/feed/metrics";
+            _metrics = await client.GetFromJsonAsync<FeedMetrics>(WithCompany(metricsPath)) ?? new();
+            var consumption = await client.GetFromJsonAsync<PagedConsumptionResponse>(WithCompany($"/api/feed/consumptions?page={_consumptionPage}&pageSize={PageSize}"));
             _consumptionRows = consumption?.Items ?? [];
             _consumptionTotal = consumption?.Total ?? 0;
-            var stocks = await client.GetFromJsonAsync<PagedStockResponse>($"/api/feed/stocks?page={_stockPage}&pageSize={PageSize}");
+            var stocks = await client.GetFromJsonAsync<PagedStockResponse>(WithCompany($"/api/feed/stocks?page={_stockPage}&pageSize={PageSize}"));
             _stockRows = stocks?.Items ?? [];
             _stockTotal = stocks?.Total ?? 0;
             EnsureDefaults();
@@ -369,8 +461,13 @@
         }
     }
 
-    private void EditConsumption(FeedConsumptionRow row)
+    private async Task EditConsumption(FeedConsumptionRow row)
     {
+        if (!await TableActionConfirm.ConfirmAsync("update", $"feed consumption from {row.Date:MMM d, yyyy}"))
+        {
+            return;
+        }
+
         _activeTab = 0;
         _editingConsumptionId = row.Id;
         _selectedBatchId = row.BatchId;
@@ -381,8 +478,13 @@
         _consumption.Notes = row.Notes;
     }
 
-    private void EditStock(FeedStockRow row)
+    private async Task EditStock(FeedStockRow row)
     {
+        if (!await TableActionConfirm.ConfirmAsync("update", $"feed stock from {row.DateArrived:MMM d, yyyy}"))
+        {
+            return;
+        }
+
         _activeTab = 1;
         _editingStockId = row.Id;
         _stockDate = row.DateArrived.ToDateTime(TimeOnly.MinValue);
@@ -395,6 +497,11 @@
 
     private async Task DeleteConsumptionAsync(Guid id)
     {
+        if (!await TableActionConfirm.ConfirmAsync("delete this feed consumption record"))
+        {
+            return;
+        }
+
         var response = await CreateApiClient().DeleteAsync($"/api/feed/consumptions/{id}");
         if (!response.IsSuccessStatusCode)
         {
@@ -408,6 +515,11 @@
 
     private async Task DeleteStockAsync(Guid id)
     {
+        if (!await TableActionConfirm.ConfirmAsync("delete this feed stock record"))
+        {
+            return;
+        }
+
         var response = await CreateApiClient().DeleteAsync($"/api/feed/stocks/{id}");
         if (!response.IsSuccessStatusCode)
         {
@@ -470,6 +582,16 @@
         return client;
     }
 
+    private string WithCompany(string path)
+    {
+        if (string.IsNullOrEmpty(CompanyQuery))
+        {
+            return path;
+        }
+
+        return path.Contains('?', StringComparison.Ordinal) ? $"{path}&{CompanyQuery}" : $"{path}?{CompanyQuery}";
+    }
+
     private static string DisplayColor(int color) =>
         color switch
         {
@@ -480,6 +602,36 @@
             4 => "Mixed",
             _ => "Mixed"
         };
+
+    private TableExportPayload BuildConsumptionExportPayload()
+    {
+        var headers = new[] { "Date", "Batch", "Feed", "Bags", "Total KG" };
+        var rows = _consumptionRows.Select(x => (IReadOnlyList<string>)
+        [
+            x.Date.ToString("MMM d, yyyy"),
+            x.BatchNumber,
+            x.FeedTypeLabel,
+            $"{x.BagsUsed:N0} x {x.BagSizeKg} kg",
+            x.TotalKg.ToString("N1")
+        ]).ToList();
+
+        return new TableExportPayload("Daily Consumption", headers, rows, $"Exported {DateTime.Now:g}");
+    }
+
+    private TableExportPayload BuildStockExportPayload()
+    {
+        var headers = new[] { "Date", "Feed", "Supplier", "Remaining", "Total Cost" };
+        var rows = _stockRows.Select(x => (IReadOnlyList<string>)
+        [
+            x.DateArrived.ToString("MMM d, yyyy"),
+            x.FeedTypeLabel,
+            x.Supplier ?? string.Empty,
+            $"{x.BagsRemaining:N0} / {x.BagsIn:N0} bags",
+            $"GHS {x.TotalCost:N2}"
+        ]).ToList();
+
+        return new TableExportPayload("Feed Stock", headers, rows, $"Exported {DateTime.Now:g}");
+    }
 
     private sealed record BatchOption(Guid Id, string BatchNumber, int BirdType, DateOnly ArrivalDate, string Breed, string? Supplier, DateOnly ExpectedSaleDate, int Status, int InitialCount, int CurrentCount, decimal SurvivalRate, List<BatchVariantOption> Variants);
     private sealed record BatchVariantOption(Guid Id, int Color, int EggColor, int InitialCount, int CurrentCount, string? Notes);

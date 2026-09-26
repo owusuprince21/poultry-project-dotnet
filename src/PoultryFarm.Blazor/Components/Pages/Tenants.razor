@@ -51,6 +51,10 @@ else
                     <MudIconButton Icon="@Icons.Material.Filled.Clear" Color="Color.Default" OnClick="ClearFiltersAsync" />
                 </MudStack>
             </MudStack>
+            <TableExportBar Title="Tenant register"
+                            FileName="tenants"
+                            Disabled="@(!_tenants.Any())"
+                            GetPayload="BuildExportPayload" />
             <MudTable Items="_tenants" Dense="true" Hover="true" RowsPerPage="10">
                 <HeaderContent>
                     <MudTh>Tenant</MudTh>
@@ -79,7 +83,7 @@ else
                     <MudText Typo="Typo.body2" Color="Color.Secondary">No tenants found.</MudText>
                 </NoRecordsContent>
                 <PagerContent>
-                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                    <TablePager />
                 </PagerContent>
             </MudTable>
         </MudPaper>
@@ -142,6 +146,27 @@ else
 
     private static string TenantContact(TenantOverview tenant) =>
         new[] { tenant.Email, tenant.Phone }.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "No contact";
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Tenant", "Code", "Email", "Phone", "Users", "Admins", "Workers", "Batches", "Birds", "Status", "Created" };
+        var rows = _tenants.Select(x => (IReadOnlyList<string>)
+        [
+            x.Name,
+            x.Code,
+            x.Email ?? string.Empty,
+            x.Phone ?? string.Empty,
+            x.TotalUsers.ToString("N0"),
+            x.FarmAdmins.ToString("N0"),
+            x.Workers.ToString("N0"),
+            x.ActiveBatches.ToString("N0"),
+            x.ActiveBirds.ToString("N0"),
+            x.IsActive ? "Active" : "Inactive",
+            x.CreatedAt.LocalDateTime.ToString("MMM d, yyyy")
+        ]).ToList();
+
+        return new TableExportPayload("Tenant Register", headers, rows, $"Exported {DateTime.Now:g}");
+    }
 
     private async Task ClearFiltersAsync()
     {

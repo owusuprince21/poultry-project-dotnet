@@ -10,8 +10,9 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
 
-<PageTitle>Settings</PageTitle>
+<PageTitle>User Profile &amp; Settings</PageTitle>
 
 @if (!_loaded)
 {
@@ -19,13 +20,13 @@
 }
 else if (!AuthSession.IsAuthenticated)
 {
-    <ModulePageShell Title="Settings" Subtitle="Authentication required.">
+    <ModulePageShell Title="User Profile & Settings" Subtitle="Authentication required.">
         <ModuleStatusPanel Title="Sign in required" Description="Please sign in to manage your profile and security." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
     </ModulePageShell>
 }
 else
 {
-    <ModulePageShell Title="Settings" Subtitle="Profile, password, and account security.">
+    <ModulePageShell Title="User Profile & Settings" Subtitle="Profile, password, and account security.">
         <MudGrid Spacing="3">
             <MudItem xs="12" lg="4">
                 <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
@@ -118,6 +119,35 @@ else
 
                         <MudDivider />
 
+                        <div>
+                            <MudText Typo="Typo.h6">Auto logout</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                Sign out automatically after no mouse or keyboard activity. Default is 5 minutes.
+                            </MudText>
+                        </div>
+
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="6">
+                                <MudSelect T="int" @bind-Value="_idleTimeoutMinutes" Label="Inactivity timeout" Variant="Variant.Outlined">
+                                    @foreach (var minutes in IdleTimeoutOptions)
+                                    {
+                                        <MudSelectItem T="int" Value="@minutes">@FormatIdleTimeout(minutes)</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="12" md="6" Class="d-flex align-center">
+                                <MudButton Variant="Variant.Outlined"
+                                           Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Timer"
+                                           Disabled="_savingIdleTimeout"
+                                           OnClick="SaveIdleTimeoutAsync">
+                                    @(_savingIdleTimeout ? "Saving..." : "Save auto logout")
+                                </MudButton>
+                            </MudItem>
+                        </MudGrid>
+
+                        <MudDivider />
+
                         <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
                             <div>
                                 <MudText Typo="Typo.subtitle1">Two-Factor Authentication</MudText>
@@ -206,14 +236,18 @@ else
 }
 
 @code {
+    private static readonly int[] IdleTimeoutOptions = [1, 2, 3, 5, 10, 15, 30, 60];
+
     private UpdateProfileModel _profile = new();
     private ChangePasswordModel _password = new();
     private TwoFactorSetup? _setup;
     private bool _loaded;
     private bool _savingProfile;
     private bool _changingPassword;
+    private bool _savingIdleTimeout;
     private bool _twoFactorEnabled;
     private bool _showDisableCode;
+    private int _idleTimeoutMinutes = IdleTimeoutPreferences.DefaultMinutes;
     private string _code1 = string.Empty;
     private string _code2 = string.Empty;
     private string _code3 = string.Empty;
@@ -251,9 +285,54 @@ else
         }
 
         await LoadProfileAsync();
+        await LoadIdleTimeoutAsync();
         _loaded = true;
         await InvokeAsync(StateHasChanged);
     }
+
+    private async Task LoadIdleTimeoutAsync()
+    {
+        try
+        {
+            var key = IdleTimeoutPreferences.StorageKey(AuthSession.UserId?.ToString());
+            var raw = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", key);
+            if (int.TryParse(raw, out var minutes))
+            {
+                _idleTimeoutMinutes = IdleTimeoutPreferences.ClampMinutes(minutes);
+                return;
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Fall through to default.
+        }
+
+        _idleTimeoutMinutes = IdleTimeoutPreferences.DefaultMinutes;
+    }
+
+    private async Task SaveIdleTimeoutAsync()
+    {
+        _savingIdleTimeout = true;
+        try
+        {
+            _idleTimeoutMinutes = IdleTimeoutPreferences.ClampMinutes(_idleTimeoutMinutes);
+            var key = IdleTimeoutPreferences.StorageKey(AuthSession.UserId?.ToString());
+            await JSRuntime.InvokeVoidAsync("localStorage.setItem", key, _idleTimeoutMinutes.ToString());
+            await IdleTimeoutPreferences.RaiseChangedAsync();
+            Snackbar.Add($"Auto logout set to {FormatIdleTimeout(_idleTimeoutMinutes)}.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not save auto logout setting: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _savingIdleTimeout = false;
+        }
+    }
+
+    private static string FormatIdleTimeout(int minutes) =>
+        minutes == 1 ? "1 minute" : $"{minutes} minutes";
 
     private async Task LoadProfileAsync()
     {

@@ -5,7 +5,8 @@ public enum UserRole
     SystemAdmin = 0,
     Admin = 1,
     Worker = 2,
-    SubAdmin = 3
+    SubAdmin = 3,
+    MarketplaceBuyer = 4
 }
 
 public enum BatchStatus
@@ -83,4 +84,32 @@ public enum BirdHealthStatus
 {
     Dead = 0,
     Sick = 1
+}
+
+public enum FarmerRegistrationStatus
+{
+    Pending = 0,
+    Approved = 1,
+    Rejected = 2
+}
+
+public enum MarketplaceListingType
+{
+    Eggs = 0,
+    Birds = 1
+}
+
+public enum MarketplaceListingStatus
+{
+    Draft = 0,
+    Published = 1,
+    SoldOut = 2,
+    Withdrawn = 3
+}
+
+public enum MarketplaceInquiryStatus
+{
+    New = 0,
+    Contacted = 1,
+    Closed = 2
 }

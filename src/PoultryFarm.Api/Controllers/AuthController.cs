@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using PoultryFarm.Application.Companies.DTOs;
 using PoultryFarm.Domain.Companies;
@@ -40,6 +41,11 @@ public sealed class AuthController(
         if (user is null || user.IsDeleted)
         {
             return BadRequest(new { detail = "Invalid username or password." });
+        }
+
+        if (user.FarmRole == Domain.Common.UserRole.MarketplaceBuyer)
+        {
+            return BadRequest(new { detail = "Marketplace guest accounts cannot sign in here." });
         }
 
         if (user.LockoutEnd is not null && user.LockoutEnd > DateTimeOffset.UtcNow)
@@ -99,8 +105,8 @@ public sealed class AuthController(
         return Ok(new
         {
             requires2Fa = false,
-            token = CreateToken(user, company),
-            user = ToUserDto(user, company)
+            token = await CreateTokenAsync(user, company),
+            user = await ToUserDtoAsync(user, company)
         });
     }
 
@@ -158,7 +164,7 @@ public sealed class AuthController(
             company = await dbContext.Companies.FindAsync(user.CompanyId.Value);
         }
 
-        return Ok(ToUserDto(user, company));
+        return Ok(await ToUserDtoAsync(user, company));
     }
 
     [HttpPost("2fa/verify")]
@@ -224,8 +230,8 @@ public sealed class AuthController(
         return Ok(new
         {
             requires2Fa = false,
-            token = CreateToken(user, company),
-            user = ToUserDto(user, company)
+            token = await CreateTokenAsync(user, company),
+            user = await ToUserDtoAsync(user, company)
         });
     }
 
@@ -272,8 +278,74 @@ public sealed class AuthController(
         return Ok(new { detail = "Password changed successfully." });
     }
 
-    private string CreateToken(ApplicationUser user, Company? company)
+    [HttpPost("password/setup")]
+    [AllowAnonymous]
+    public async Task<IActionResult> SetupPasswordWithInvite([FromBody] PasswordSetupRequest request)
     {
+        if (string.IsNullOrWhiteSpace(request.Token))
+        {
+            return BadRequest(new { token = "Invite token is required." });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            return BadRequest(new { newPassword = "New password is required." });
+        }
+
+        if (!string.Equals(request.NewPassword, request.ConfirmPassword, StringComparison.Ordinal))
+        {
+            return BadRequest(new { confirmPassword = "New passwords do not match." });
+        }
+
+        var tokenHash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(request.Token.Trim())));
+
+        var invite = await dbContext.PasswordInvites
+            .FirstOrDefaultAsync(x => x.TokenHash == tokenHash && x.ConsumedAt == null);
+
+        if (invite is null || invite.ExpiresAt < DateTimeOffset.UtcNow)
+        {
+            return BadRequest(new { detail = "Invite link is invalid or has expired." });
+        }
+
+        var user = await userManager.FindByIdAsync(invite.UserId.ToString());
+        if (user is null || user.IsDeleted)
+        {
+            return BadRequest(new { detail = "User account was not found." });
+        }
+
+        // Invite token already authenticated this request; set the password directly
+        // instead of Identity's password-reset token flow (no Default provider required).
+        if (await userManager.HasPasswordAsync(user))
+        {
+            var removeResult = await userManager.RemovePasswordAsync(user);
+            if (!removeResult.Succeeded)
+            {
+                return BadRequest(new { detail = removeResult.Errors.Select(x => x.Description).ToArray() });
+            }
+        }
+
+        var result = await userManager.AddPasswordAsync(user, request.NewPassword);
+        if (!result.Succeeded)
+        {
+            return BadRequest(new { detail = result.Errors.Select(x => x.Description).ToArray() });
+        }
+
+        user.MustChangePassword = false;
+        await userManager.UpdateAsync(user);
+
+        invite.ConsumedAt = DateTimeOffset.UtcNow;
+        await dbContext.SaveChangesAsync();
+
+        return Ok(new { detail = "Password set successfully. You can sign in now.", username = user.UserName });
+    }
+
+    private async Task<string> CreateTokenAsync(ApplicationUser user, Company? company)
+    {
+        user.LastSeenAt = DateTimeOffset.UtcNow;
+        await userManager.UpdateAsync(user);
+
         var signingKey = configuration["Jwt:SigningKey"]
             ?? "development-signing-key-change-before-production-12345";
 
@@ -310,18 +382,47 @@ public sealed class AuthController(
             claims.Add(new Claim("company_name", company.Name));
         }
 
+        if (user.FarmRole == PoultryFarm.Domain.Common.UserRole.Worker && !user.IsSystemAdmin)
+        {
+            var pages = await dbContext.WorkerPagePermissions
+                .AsNoTracking()
+                .Where(x => x.UserId == user.Id)
+                .Select(x => x.PageKey)
+                .ToListAsync();
+            foreach (var page in pages)
+            {
+                claims.Add(new Claim("allowed_page", page));
+            }
+        }
+
+        if (user.FarmRole == PoultryFarm.Domain.Common.UserRole.MarketplaceBuyer)
+        {
+            claims.Add(new Claim("marketplace_buyer", "true"));
+        }
+
+        var lifetimeHours = user.FarmRole == PoultryFarm.Domain.Common.UserRole.MarketplaceBuyer ? 24 : 8;
         var token = new JwtSecurityToken(
             issuer: issuer,
             audience: audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(8),
+            expires: DateTime.UtcNow.AddHours(lifetimeHours),
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    private static object ToUserDto(ApplicationUser user, Company? company)
+    private async Task<object> ToUserDtoAsync(ApplicationUser user, Company? company)
     {
+        IReadOnlyCollection<string> allowedPages = [];
+        if (user.FarmRole == PoultryFarm.Domain.Common.UserRole.Worker && !user.IsSystemAdmin)
+        {
+            allowedPages = await dbContext.WorkerPagePermissions
+                .AsNoTracking()
+                .Where(x => x.UserId == user.Id)
+                .Select(x => x.PageKey)
+                .ToListAsync();
+        }
+
         return new
         {
             id = user.Id,
@@ -345,7 +446,8 @@ public sealed class AuthController(
             isSystemAdmin = user.IsSystemAdmin,
             isSuperuser = IsSuperAdmin(user),
             mustChangePassword = user.MustChangePassword,
-            twoFactorEnabled = user.TwoFactorEnabled
+            twoFactorEnabled = user.TwoFactorEnabled,
+            allowedPages
         };
     }
 
@@ -372,6 +474,9 @@ public sealed class AuthController(
             "farmworker" => "worker",
             "farm_worker" => "worker",
 
+            "marketplacebuyer" => "marketplace_buyer",
+            "marketplace_buyer" => "marketplace_buyer",
+
             "systemadmin" => "system_admin",
             "system_admin" => "system_admin",
 
@@ -390,6 +495,11 @@ public sealed record LoginRequest(
 
 public sealed record ForcePasswordChangeRequest(
     string? CurrentPassword,
+    string NewPassword,
+    string ConfirmPassword);
+
+public sealed record PasswordSetupRequest(
+    string Token,
     string NewPassword,
     string ConfirmPassword);
 

@@ -52,6 +52,7 @@ h1:focus {
     align-items: center;
     margin-right: .75rem;
     overflow: visible;
+    z-index: 1302;
 }
 
 .topbar-icon-button {
@@ -71,10 +72,18 @@ h1:focus {
     background: rgba(255, 255, 255, .08);
 }
 
+.notification-clickaway {
+    position: fixed;
+    inset: 0;
+    z-index: 1300;
+    background: transparent;
+}
+
 .notification-popover {
     border: 1px solid #dbe3ef;
     border-radius: 8px;
     overflow: hidden;
+    z-index: 1301 !important;
 }
 
 .topbar-badge {
@@ -202,6 +211,33 @@ h1:focus {
     background: #eff6ff;
     color: #1d4ed8;
     font-weight: 700;
+}
+
+.nav-link-with-badge .mud-nav-link-text {
+    width: 100%;
+}
+
+.nav-link-title-row {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    width: 100%;
+}
+
+.nav-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.35rem;
+    height: 1.35rem;
+    padding: 0 .35rem;
+    border-radius: 999px;
+    background: #dc2626;
+    color: #fff;
+    font-size: .68rem;
+    font-weight: 800;
+    line-height: 1;
 }
 
 .nav-section {
@@ -467,7 +503,9 @@ h1:focus {
     height: 4.5rem;
     margin-bottom: 1rem;
     border-radius: 12px;
-    object-fit: cover;
+    object-fit: contain;
+    background: rgba(255, 255, 255, 0.92);
+    padding: 0.35rem;
     box-shadow: 0 18px 40px rgba(0, 0, 0, .35);
 }
 
@@ -758,6 +796,12 @@ h1:focus {
     padding: .75rem .9rem;
     border-radius: 8px;
     background: #f1f5f9;
+}
+
+.chat-emoji-lg {
+    font-size: 2.35rem !important;
+    line-height: 1.2 !important;
+    letter-spacing: 0.06em;
 }
 
 .chat-hover-reactions {

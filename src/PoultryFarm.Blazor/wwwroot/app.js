@@ -76,6 +76,19 @@ window.poultryFarmUi = {
         link.click();
     },
 
+    downloadBytes(base64, fileName, contentType) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+
+        const blob = new Blob([bytes], { type: contentType || "application/octet-stream" });
+        const objectUrl = URL.createObjectURL(blob);
+        this.downloadObjectUrl(objectUrl, fileName || "download.bin");
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+    },
+
     revokeObjectUrl(objectUrl) {
         if (objectUrl) {
             URL.revokeObjectURL(objectUrl);

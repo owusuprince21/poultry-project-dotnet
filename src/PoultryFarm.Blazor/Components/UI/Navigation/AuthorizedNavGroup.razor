@@ -21,7 +21,7 @@
     public NavGroup Group { get; set; } = default!;
 
     private IEnumerable<NavItem> VisibleItems =>
-        Group.Items.Where(item => NavAuthorization.IsVisible(AuthSession, item.Permission));
+        Group.Items.Where(item => NavAuthorization.IsVisible(AuthSession, item));
 
     private static NavLinkMatch GetMatch(NavItem item)
     {

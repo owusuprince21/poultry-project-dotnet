@@ -8,8 +8,10 @@ public enum NavPermission
     FarmAdminOrWorker,
     WorkerOnly,
     SystemOrFarmAdmin,
+    SubAdminOrFarmAdmin,
     OperationsAccess,
     CommercialAccess,
     AssistanceAccess,
-    ReportsAccess
+    ReportsAccess,
+    FarmAdminReports
 }

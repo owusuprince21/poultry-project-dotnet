@@ -1,0 +1,828 @@
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using System.Text.Json
+@using Microsoft.AspNetCore.SignalR.Client
+@using PoultryFarm.Marketplace.Services
+@inject IHttpClientFactory HttpClientFactory
+@inject GuestSession GuestSession
+@inject IConfiguration Configuration
+@inject IJSRuntime JSRuntime
+@inject IWebHostEnvironment Environment
+@implements IAsyncDisposable
+
+<div class="listing-chat">
+    @if (!_ready)
+    {
+        <div class="listing-chat-loading">Connecting to farm chat...</div>
+    }
+    else if (_farmContactId is null)
+    {
+        <div class="listing-chat-loading">Unable to start chat with this farm.</div>
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <p class="notice error">@_error</p>
+        }
+    }
+    else
+    {
+        <div class="chat-thread-header">
+            <div class="chat-avatar">@Initials(_farmContactName)</div>
+            <div>
+                <strong>@_farmContactName</strong>
+                <span>@_farmName · @_listingTitle</span>
+            </div>
+        </div>
+
+        <div class="chat-messages" @ref="_messagesContainer">
+            @if (_messages.Count == 0)
+            {
+                <div class="chat-empty">
+                    <strong>You're connected</strong>
+                    <p>Say hello and share quantity or delivery details. The farm team will reply here.</p>
+                </div>
+            }
+            @foreach (var message in _messages)
+            {
+                <div class="chat-row @(message.IsMine ? "mine" : "theirs")" @key="message.Id">
+                    @if (!message.IsMine)
+                    {
+                        <div class="chat-avatar sm">@Initials(message.SenderDisplayName ?? _farmContactName)</div>
+                    }
+                    <div class="chat-message-wrap">
+                        <div class="chat-bubble @(message.IsMine ? "mine" : "theirs")">
+                            <div class="chat-hover-reactions">
+                                @foreach (var emoji in QuickReactionEmojis)
+                                {
+                                    <button type="button" title="React @emoji" @onclick="@(() => ReactAsync(message, emoji))">@emoji</button>
+                                }
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(message.ReplyPreview))
+                            {
+                                <div class="chat-reply-preview">
+                                    <span>@(message.ReplySenderDisplayName ?? "Message")</span>
+                                    <small>@TrimPreview(message.ReplyPreview)</small>
+                                </div>
+                            }
+                            @if (!message.IsMine && !string.IsNullOrWhiteSpace(message.SenderDisplayName))
+                            {
+                                <div class="chat-bubble-name">@message.SenderDisplayName</div>
+                            }
+                            <div class="chat-bubble-body @(ChatEmojiSizing.ShouldEnlarge(message.Body) ? "emoji-lg" : null)">@message.Body</div>
+                            <div class="chat-bubble-meta">
+                                <span>@message.SentAt.ToLocalTime().ToString("t")</span>
+                                @if (message.EditedAt.HasValue)
+                                {
+                                    <span>edited</span>
+                                }
+                                <button type="button" class="chat-reply-btn" title="Reply" @onclick="@(() => StartReplyAsync(message))">Reply</button>
+                                @if (CanDeleteNow(message))
+                                {
+                                    <button type="button" class="chat-delete-btn" title="Delete" @onclick="@(() => DeleteMessageAsync(message))">Delete</button>
+                                }
+                            </div>
+                        </div>
+                        @if (IsCurrentSeenMessage(message))
+                        {
+                            <div class="chat-read-indicator" title="Seen" aria-label="Seen">
+                                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                                    <path fill="currentColor" d="M12 5c-7 0-10 7-10 7s3 7 10 7 10-7 10-7-3-7-10-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 .001 6.001A3 3 0 0 0 12 9z"/>
+                                </svg>
+                            </div>
+                        }
+                        @if (message.Reactions is { Count: > 0 })
+                        {
+                            <div class="chat-reactions">
+                                @foreach (var reaction in message.Reactions)
+                                {
+                                    <button type="button"
+                                            class="@(reaction.ReactedByMe ? "active" : null)"
+                                            @onclick="@(() => ReactAsync(message, reaction.Emoji))">
+                                        <span>@reaction.Emoji</span>
+                                        <small>@reaction.Count</small>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+            @if (_peerTyping)
+            {
+                <div class="chat-typing">@_farmContactName is typing...</div>
+            }
+        </div>
+
+        <div class="chat-compose-wrap">
+            @if (_replyTo is not null)
+            {
+                <div class="chat-compose-reply">
+                    <div>
+                        <strong>Replying to @(_replyTo.SenderDisplayName ?? (_replyTo.IsMine ? "you" : _farmContactName))</strong>
+                        <span>@TrimPreview(_replyTo.Body)</span>
+                    </div>
+                    <button type="button" class="chat-compose-reply-close" title="Cancel reply" @onclick="ClearReply">×</button>
+                </div>
+            }
+            @if (_showEmojiPicker)
+            {
+                <button type="button"
+                        class="chat-emoji-backdrop"
+                        aria-label="Close emoji picker"
+                        @onclick="CloseEmojiPicker"></button>
+                <div class="chat-emoji-picker" @onclick:stopPropagation="true">
+                    <div class="chat-emoji-picker-header">
+                        <div>
+                            <strong>Emoji library</strong>
+                            <span>@_emojis.Count.ToString("N0") emojis</span>
+                        </div>
+                        @if (_emojisLoading)
+                        {
+                            <span class="muted">Loading...</span>
+                        }
+                    </div>
+                    <input class="chat-emoji-search"
+                           @bind="_emojiSearch"
+                           @bind:event="oninput"
+                           placeholder="Search emojis" />
+                    <div class="chat-emoji-grid">
+                        @foreach (var emoji in FilteredEmojis)
+                        {
+                            <button type="button" title="@emoji" @onclick="@(() => AddEmoji(emoji))">@emoji</button>
+                        }
+                    </div>
+                </div>
+            }
+
+            <form class="chat-compose" @onsubmit="SendAsync" @onsubmit:preventDefault>
+                <button type="button"
+                        class="chat-emoji-toggle"
+                        title="Insert emoji"
+                        @onclick="@(() => _showEmojiPicker = !_showEmojiPicker)">
+                    😊
+                </button>
+                <input @ref="_composerInput"
+                       value="@_draft"
+                       @oninput="OnDraftInput"
+                       @onkeydown="OnDraftKey"
+                       @key="_composerEpoch"
+                       placeholder="@(_replyTo is null ? "Type a message..." : "Write a reply...")"
+                       disabled="@_sending"
+                       aria-label="Message" />
+                <button class="btn primary" type="submit" disabled="@(_sending || string.IsNullOrWhiteSpace(_draft))">
+                    @(_sending ? "..." : "Send")
+                </button>
+            </form>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <p class="notice error">@_error</p>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public Guid ListingId { get; set; }
+    [Parameter] public string ListingTitle { get; set; } = "Listing";
+    [Parameter] public string FarmName { get; set; } = "Farm";
+    [Parameter] public string? InitialMessage { get; set; }
+
+    private static readonly string[] QuickReactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+    private static readonly string[] FallbackEmojis =
+    [
+        "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣",
+        "😊", "😇", "🙂", "🙃", "😉", "😍", "😘", "😎",
+        "🤔", "😮", "😢", "😭", "😡", "🙏", "👏", "👍",
+        "👎", "👌", "💪", "✅", "⚠️", "🔥", "⭐", "💡",
+        "❤️", "💚", "💙", "🐔", "🐣", "🥚", "🌽", "💊",
+        "💰", "📌", "📋", "📈", "🚚", "🧹", "🩺", "🕒"
+    ];
+
+    private readonly List<ChatMessageRow> _messages = [];
+    private IReadOnlyList<string> _emojis = FallbackEmojis;
+    private HubConnection? _hubConnection;
+    private ElementReference _messagesContainer;
+    private ElementReference _composerInput;
+    private Guid? _farmContactId;
+    private string _farmContactName = "Farm";
+    private string _farmName = "Farm";
+    private string _listingTitle = "Listing";
+    private string _draft = string.Empty;
+    private string _emojiSearch = string.Empty;
+    private int _composerEpoch;
+    private string? _error;
+    private bool _ready;
+    private bool _sending;
+    private bool _peerTyping;
+    private bool _showEmojiPicker;
+    private bool _emojisLoading;
+    private bool _pendingScrollToBottom;
+    private ChatMessageRow? _replyTo;
+    private CancellationTokenSource? _typingCts;
+
+    private static readonly TimeSpan MessageActionWindow = TimeSpan.FromMinutes(10);
+
+    private IEnumerable<string> FilteredEmojis
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_emojiSearch))
+            {
+                return _emojis;
+            }
+
+            var term = _emojiSearch.Trim();
+            return _emojis.Where(x => x.Contains(term, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            if (_pendingScrollToBottom)
+            {
+                _pendingScrollToBottom = false;
+                await ScrollMessagesAsync();
+            }
+
+            return;
+        }
+
+        _farmName = string.IsNullOrWhiteSpace(FarmName) ? "Farm" : FarmName;
+        _listingTitle = ListingTitle;
+        _ = LoadEmojisAsync();
+
+        await GuestSession.LoadAsync();
+        if (!GuestSession.IsAuthenticated)
+        {
+            _error = "Guest session missing.";
+            _ready = true;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        try
+        {
+            var client = CreateApiClient();
+            var response = await client.PostAsJsonAsync("/api/marketplace/conversations", new
+            {
+                listingId = ListingId,
+                message = string.IsNullOrWhiteSpace(InitialMessage) ? null : InitialMessage
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    await GuestSession.ClearAsync();
+                    _error = "Your guest session expired. Close chat and start again with your name and contact.";
+                }
+                else
+                {
+                    _error = await response.Content.ReadAsStringAsync();
+                }
+
+                _ready = true;
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var conversation = await response.Content.ReadFromJsonAsync<ConversationDto>();
+            if (conversation is null)
+            {
+                _error = "Could not open conversation.";
+                _ready = true;
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            _farmContactId = conversation.FarmContactUserId;
+            _farmContactName = conversation.FarmContactName ?? "Farm";
+            _listingTitle = conversation.ListingTitle;
+            _farmName = conversation.FarmName;
+            if (conversation.FirstMessage is not null)
+            {
+                Upsert(conversation.FirstMessage);
+            }
+
+            await LoadMessagesAsync();
+            await ConnectHubAsync();
+            _pendingScrollToBottom = true;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+
+        _ready = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadMessagesAsync()
+    {
+        if (_farmContactId is null)
+        {
+            return;
+        }
+
+        var client = CreateApiClient();
+        var messages = await client.GetFromJsonAsync<List<ChatMessageRow>>($"/api/chat/messages/{_farmContactId}") ?? [];
+        _messages.Clear();
+        _messages.AddRange(messages.OrderBy(x => x.SentAt));
+    }
+
+    private async Task ConnectHubAsync()
+    {
+        var apiBase = Configuration["Api:BaseUrl"] ?? "http://localhost:5100";
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl($"{apiBase.TrimEnd('/')}/hubs/activity", options =>
+            {
+                options.AccessTokenProvider = () => Task.FromResult(GuestSession.Token);
+            })
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<ChatMessageRow>("chat.message", message =>
+        {
+            if (_farmContactId is null)
+            {
+                return;
+            }
+
+            if (message.SenderUserId != _farmContactId && message.RecipientUserId != _farmContactId &&
+                message.SenderUserId != GuestSession.UserId && message.RecipientUserId != GuestSession.UserId)
+            {
+                return;
+            }
+
+            Upsert(message);
+            _peerTyping = false;
+            _pendingScrollToBottom = true;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        _hubConnection.On<TypingDto>("chat.typing", signal =>
+        {
+            if (_farmContactId is null || signal.SenderUserId != _farmContactId)
+            {
+                return;
+            }
+
+            _peerTyping = signal.IsTyping;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        _hubConnection.On<ChatReactionUpdated>("chat.reaction.updated", updated =>
+        {
+            ApplyReactionUpdate(updated);
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        _hubConnection.On<ChatMessageDeleted>("chat.message.deleted", deleted =>
+        {
+            _messages.RemoveAll(x => x.Id == deleted.MessageId);
+            if (_replyTo?.Id == deleted.MessageId)
+            {
+                _replyTo = null;
+            }
+
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        _hubConnection.On<ChatReadReceipt>("chat.read", receipt =>
+        {
+            var changed = false;
+            foreach (var message in _messages
+                         .Where(x => x.IsMine && x.RecipientUserId == receipt.ContactId && x.ReadAt is null)
+                         .ToList())
+            {
+                var index = _messages.FindIndex(x => x.Id == message.Id);
+                if (index < 0)
+                {
+                    continue;
+                }
+
+                _messages[index] = message with { ReadAt = receipt.ReadAt };
+                changed = true;
+            }
+
+            if (changed)
+            {
+                _ = InvokeAsync(StateHasChanged);
+            }
+        });
+
+        await _hubConnection.StartAsync();
+    }
+
+    private async Task SendAsync()
+    {
+        if (_sending || _farmContactId is null || string.IsNullOrWhiteSpace(_draft))
+        {
+            return;
+        }
+
+        var body = _draft.Trim();
+        var replyToId = _replyTo?.Id;
+        _draft = string.Empty;
+        _replyTo = null;
+        _composerEpoch++;
+        _sending = true;
+        _error = null;
+        _showEmojiPicker = false;
+        try
+        {
+            var client = CreateApiClient();
+            var response = await client.PostAsJsonAsync("/api/chat/messages", new
+            {
+                recipientUserId = _farmContactId,
+                body,
+                replyToMessageId = replyToId
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _draft = body;
+                _composerEpoch++;
+                _error = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            var message = await response.Content.ReadFromJsonAsync<ChatMessageRow>();
+            if (message is not null)
+            {
+                Upsert(message);
+            }
+
+            _pendingScrollToBottom = true;
+            await SendTypingAsync(false);
+        }
+        catch (Exception ex)
+        {
+            _draft = body;
+            _composerEpoch++;
+            _error = ex.Message;
+        }
+        finally
+        {
+            _sending = false;
+        }
+    }
+
+    private void OnDraftInput(ChangeEventArgs args)
+    {
+        _draft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task ReactAsync(ChatMessageRow message, string emoji)
+    {
+        if (string.IsNullOrWhiteSpace(emoji))
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await CreateApiClient().PostAsJsonAsync($"/api/chat/messages/{message.Id}/reactions", new { emoji });
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = await response.Content.ReadAsStringAsync();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var updated = await response.Content.ReadFromJsonAsync<ChatReactionUpdated>(JsonOptions);
+            if (updated is not null)
+            {
+                ApplyReactionUpdate(updated);
+            }
+            else
+            {
+                // Fallback if the payload did not deserialize: toggle locally so the buyer still sees it.
+                ApplyLocalReactionToggle(message.Id, emoji.Trim());
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void ApplyReactionUpdate(ChatReactionUpdated updated)
+    {
+        if (updated.MessageId == Guid.Empty)
+        {
+            return;
+        }
+
+        var index = _messages.FindIndex(x => x.Id == updated.MessageId);
+        if (index < 0)
+        {
+            return;
+        }
+
+        _messages[index] = _messages[index] with
+        {
+            Reactions = updated.Reactions ?? []
+        };
+    }
+
+    private void ApplyLocalReactionToggle(Guid messageId, string emoji)
+    {
+        var index = _messages.FindIndex(x => x.Id == messageId);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var current = _messages[index];
+        var reactions = (current.Reactions ?? []).ToList();
+        var existing = reactions.Find(x => x.Emoji == emoji);
+        if (existing is null)
+        {
+            reactions.Add(new ChatReactionRow(emoji, 1, true));
+        }
+        else if (existing.ReactedByMe && existing.Count <= 1)
+        {
+            reactions.Remove(existing);
+        }
+        else if (existing.ReactedByMe)
+        {
+            reactions[reactions.IndexOf(existing)] = existing with { Count = existing.Count - 1, ReactedByMe = false };
+        }
+        else
+        {
+            reactions[reactions.IndexOf(existing)] = existing with { Count = existing.Count + 1, ReactedByMe = true };
+        }
+
+        _messages[index] = current with { Reactions = reactions };
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private async Task OnDraftKey(KeyboardEventArgs args)
+    {
+        // Let the form submit handle Enter so the message is only sent once.
+        if (args.Key == "Enter")
+        {
+            return;
+        }
+
+        await SendTypingAsync(true);
+        _typingCts?.Cancel();
+        _typingCts = new CancellationTokenSource();
+        var token = _typingCts.Token;
+        try
+        {
+            await Task.Delay(1200, token);
+            await SendTypingAsync(false);
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task SendTypingAsync(bool isTyping)
+    {
+        if (_farmContactId is null || _hubConnection?.State != HubConnectionState.Connected)
+        {
+            return;
+        }
+
+        try
+        {
+            await _hubConnection.InvokeAsync("SendTyping", _farmContactId.Value, isTyping);
+        }
+        catch
+        {
+            var client = CreateApiClient();
+            await client.PostAsJsonAsync("/api/chat/typing", new { recipientUserId = _farmContactId, isTyping });
+        }
+    }
+
+    private async Task StartReplyAsync(ChatMessageRow message)
+    {
+        _replyTo = message;
+        _showEmojiPicker = false;
+        await InvokeAsync(StateHasChanged);
+        await FocusComposerAsync();
+    }
+
+    private void ClearReply()
+    {
+        _replyTo = null;
+    }
+
+    private async Task FocusComposerAsync()
+    {
+        try
+        {
+            await _composerInput.FocusAsync();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private static bool CanDeleteNow(ChatMessageRow message) =>
+        message.IsMine && DateTimeOffset.UtcNow - message.SentAt <= MessageActionWindow;
+
+    private async Task DeleteMessageAsync(ChatMessageRow message)
+    {
+        if (!CanDeleteNow(message))
+        {
+            _error = "Messages can only be deleted within the first 10 minutes.";
+            return;
+        }
+
+        try
+        {
+            var response = await CreateApiClient().DeleteAsync($"/api/chat/messages/{message.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _messages.RemoveAll(x => x.Id == message.Id);
+            if (_replyTo?.Id == message.Id)
+            {
+                _replyTo = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private bool IsCurrentSeenMessage(ChatMessageRow message)
+    {
+        if (!message.IsMine || !message.ReadAt.HasValue)
+        {
+            return false;
+        }
+
+        var latestReadMessage = _messages
+            .Where(x => x.IsMine && x.ReadAt.HasValue)
+            .OrderByDescending(x => x.SentAt)
+            .FirstOrDefault();
+
+        return latestReadMessage?.Id == message.Id;
+    }
+
+    private static string TrimPreview(string text) =>
+        text.Length > 80 ? $"{text[..80]}..." : text;
+
+    private void AddEmoji(string emoji)
+    {
+        _draft = $"{_draft}{emoji}";
+    }
+
+    private void CloseEmojiPicker()
+    {
+        _showEmojiPicker = false;
+        _emojiSearch = string.Empty;
+    }
+
+    private async Task LoadEmojisAsync()
+    {
+        _emojisLoading = true;
+        try
+        {
+            var path = Path.Combine(Environment.WebRootPath, "emoji-list.json");
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            var json = await File.ReadAllTextAsync(path);
+            var emojis = JsonSerializer.Deserialize<string[]>(json) ?? [];
+            if (emojis.Length > 0)
+            {
+                _emojis = emojis;
+            }
+        }
+        catch
+        {
+            _emojis = FallbackEmojis;
+        }
+        finally
+        {
+            _emojisLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void Upsert(ChatMessageRow message)
+    {
+        var index = _messages.FindIndex(x => x.Id == message.Id);
+        if (index >= 0)
+        {
+            var existing = _messages[index];
+            _messages[index] = message with
+            {
+                Reactions = message.Reactions ?? existing.Reactions
+            };
+        }
+        else
+        {
+            _messages.Add(message);
+        }
+
+        _messages.Sort((a, b) => a.SentAt.CompareTo(b.SentAt));
+    }
+
+    private async Task ScrollMessagesAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("marketplaceUi.scrollToBottom", _messagesContainer);
+        }
+        catch (JSException)
+        {
+            // Script may not be loaded yet.
+        }
+        catch (InvalidOperationException)
+        {
+            // Element may not be rendered yet.
+        }
+    }
+
+    private static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return "F";
+        }
+
+        if (parts.Length == 1)
+        {
+            return parts[0][..1].ToUpperInvariant();
+        }
+
+        return $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant();
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GuestSession.Token);
+        return client;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _typingCts?.Cancel();
+        _typingCts?.Dispose();
+        if (_hubConnection is not null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+
+    private sealed record ConversationDto(
+        Guid Id,
+        Guid ListingId,
+        string ListingTitle,
+        string FarmName,
+        Guid CompanyId,
+        Guid BuyerUserId,
+        Guid FarmContactUserId,
+        string? FarmContactName,
+        ChatMessageRow? FirstMessage);
+
+    private sealed record ChatMessageRow(
+        Guid Id,
+        Guid SenderUserId,
+        Guid RecipientUserId,
+        string Body,
+        DateTimeOffset SentAt,
+        bool IsMine,
+        string? SenderDisplayName = null,
+        string? RecipientDisplayName = null,
+        DateTimeOffset? ReadAt = null,
+        Guid? ReplyToMessageId = null,
+        string? ReplyPreview = null,
+        string? ReplySenderDisplayName = null,
+        DateTimeOffset? EditedAt = null,
+        bool CanEdit = false,
+        bool CanDelete = false,
+        IReadOnlyCollection<ChatReactionRow>? Reactions = null);
+
+    private sealed record ChatReactionRow(string Emoji, int Count, bool ReactedByMe);
+    private sealed record ChatReactionUpdated(Guid MessageId, List<ChatReactionRow>? Reactions);
+    private sealed record ChatMessageDeleted(Guid MessageId);
+    private sealed record ChatReadReceipt(Guid ContactId, DateTimeOffset ReadAt);
+    private sealed record TypingDto(Guid SenderUserId, string SenderDisplayName, bool IsTyping);
+}

@@ -8,6 +8,7 @@
 @inject AuthSession AuthSession
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
 
 <PageTitle>Batch Management</PageTitle>
 
@@ -26,6 +27,71 @@
             <DashboardMetricCard Label="Avg Survival" Value="@AverageSurvival" Detail="current birds vs placement" Icon="@Icons.Material.Filled.HealthAndSafety" Color="Color.Info" />
         </MudItem>
     </MudGrid>
+
+    <MudPaper Elevation="0" Class="work-surface pa-4 mt-4">
+        <MudStack Spacing="3">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+                <div>
+                    <MudText Typo="Typo.h6" Class="font-semibold">Batch growth progress</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Track how far the selected flock has grown between arrival and expected sale day.
+                    </MudText>
+                </div>
+                <MudSelect T="Guid?"
+                           Value="_selectedBatchId"
+                           ValueChanged="OnSelectedBatchChanged"
+                           Label="Selected batch"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Style="min-width: 16rem;"
+                           Clearable="true">
+                    @foreach (var batch in _batches)
+                    {
+                        <MudSelectItem T="Guid?" Value="@batch.Id">@batch.BatchNumber — @batch.Breed</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudStack>
+
+            @if (SelectedBatch is null)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                    Select a batch (or click a table row) to view growth progress from arrival to expected sale date.
+                </MudAlert>
+            }
+            else
+            {
+                <MudStack Spacing="2">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.subtitle2" Class="font-semibold">
+                            @SelectedBatch.BatchNumber · @DisplayBirdType(SelectedBatch.BirdType) · @SelectedBatch.Breed
+                        </MudText>
+                        <MudChip T="string" Size="Size.Small" Color="@GrowthProgressColor(SelectedBatch)" Variant="Variant.Filled">
+                            @GrowthProgressPercent(SelectedBatch).ToString("N0")% complete
+                        </MudChip>
+                    </MudStack>
+
+                    <MudProgressLinear Color="@GrowthProgressColor(SelectedBatch)"
+                                       Size="Size.Large"
+                                       Value="@GrowthProgressPercent(SelectedBatch)"
+                                       Class="rounded-lg"
+                                       Style="height: 0.85rem;" />
+
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            Arrival @SelectedBatch.ArrivalDate.ToString("MMM d, yyyy")
+                        </MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            Day @ElapsedGrowthDays(SelectedBatch) of @TotalGrowthDays(SelectedBatch)
+                            · @GrowthProgressCaption(SelectedBatch)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            Sale @SelectedBatch.ExpectedSaleDate.ToString("MMM d, yyyy")
+                        </MudText>
+                    </MudStack>
+                </MudStack>
+            }
+        </MudStack>
+    </MudPaper>
 
     <MudGrid Spacing="3" Class="mt-4">
         <MudItem xs="12" lg="4">
@@ -63,15 +129,27 @@
                 <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
                     <div>
                         <MudText Typo="Typo.h6" Class="font-semibold">Batch Readiness</MudText>
-                        <MudText Typo="Typo.body2" Color="Color.Secondary">From placement day to expected sale day, with survival and variant counts.</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">From placement day to expected sale day, with survival and variant counts. Click a row to track growth above.</MudText>
                     </div>
                     <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync">Refresh</MudButton>
                 </MudStack>
 
-                <MudTable Items="@_batches" Dense="true" Hover="true" Loading="@_loading" RowsPerPage="10">
+                <TableExportBar Title="Batch readiness"
+                                FileName="batches"
+                                Disabled="@(!_batches.Any())"
+                                GetPayload="BuildExportPayload" />
+                <MudTable T="BatchModel"
+                          Items="@_batches"
+                          Dense="true"
+                          Hover="true"
+                          Loading="@_loading"
+                          RowsPerPage="10"
+                          RowClassFunc="BatchRowClass"
+                          OnRowClick="OnBatchRowClick">
                     <HeaderContent>
                         <MudTh>Batch</MudTh>
                         <MudTh>Breed</MudTh>
+                        <MudTh>Arrival</MudTh>
                         <MudTh>Age</MudTh>
                         <MudTh>Birds</MudTh>
                         <MudTh>Survival</MudTh>
@@ -85,6 +163,7 @@
                             <MudText Typo="Typo.caption" Color="Color.Secondary">@DisplayBirdType(context.BirdType)</MudText>
                         </MudTd>
                         <MudTd DataLabel="Breed">@context.Breed</MudTd>
+                        <MudTd DataLabel="Arrival">@context.ArrivalDate.ToString("MMM d, yyyy")</MudTd>
                         <MudTd DataLabel="Age">@AgeInWeeks(context) weeks</MudTd>
                         <MudTd DataLabel="Birds">@context.CurrentCount.ToString("N0") / @context.InitialCount.ToString("N0")</MudTd>
                         <MudTd DataLabel="Survival">@context.SurvivalRate.ToString("N1")%</MudTd>
@@ -93,20 +172,19 @@
                             <MudChip T="string" Size="Size.Small" Color="@ReadinessColor(context)" Variant="Variant.Outlined">@ReadinessText(context)</MudChip>
                         </MudTd>
                         <MudTd>
-                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
-                                @if (context.Status == 0)
-                                {
-                                    <MudMenuItem Icon="@Icons.Material.Filled.PointOfSale" OnClick="@(() => MarkReadyForSaleAsync(context.Id))">Mark ready for sale</MudMenuItem>
-                                }
-                                <MudMenuItem Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync">Refresh</MudMenuItem>
-                            </MudMenu>
+                            @if (context.Status == 0)
+                            {
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.PointOfSale" OnClick="@(() => MarkReadyForSaleAsync(context))">Mark ready for sale</MudMenuItem>
+                                </MudMenu>
+                            }
                         </MudTd>
                     </RowTemplate>
                     <NoRecordsContent>
                         <MudText Typo="Typo.body2" Color="Color.Secondary">No batches have been created for this farm yet.</MudText>
                     </NoRecordsContent>
                     <PagerContent>
-                        <MudTablePager />
+                        <TablePager />
                     </PagerContent>
                 </MudTable>
             </MudPaper>
@@ -117,10 +195,14 @@
 @code {
     private readonly BatchForm _form = new();
     private List<BatchModel> _batches = [];
+    private Guid? _selectedBatchId;
     private bool _loading;
     private bool _saving;
 
     private IReadOnlyCollection<BatchModel> ActiveBatches => _batches.Where(x => x.Status == 0).ToList();
+
+    private BatchModel? SelectedBatch =>
+        _selectedBatchId is Guid id ? _batches.FirstOrDefault(x => x.Id == id) : null;
 
     private string AverageSurvival =>
         ActiveBatches.Count == 0 ? "0%" : $"{ActiveBatches.Average(x => x.SurvivalRate):N1}%";
@@ -144,6 +226,15 @@
         try
         {
             _batches = await CreateApiClient().GetFromJsonAsync<List<BatchModel>>("/api/batches") ?? [];
+            if (_selectedBatchId is Guid selected && _batches.All(x => x.Id != selected))
+            {
+                _selectedBatchId = null;
+            }
+
+            if (_selectedBatchId is null && _batches.Count > 0)
+            {
+                _selectedBatchId = ActiveBatches.FirstOrDefault()?.Id ?? _batches[0].Id;
+            }
         }
         catch (Exception ex)
         {
@@ -154,6 +245,25 @@
             _loading = false;
         }
     }
+
+    private Task OnSelectedBatchChanged(Guid? batchId)
+    {
+        _selectedBatchId = batchId;
+        return Task.CompletedTask;
+    }
+
+    private void OnBatchRowClick(TableRowClickEventArgs<BatchModel> args)
+    {
+        if (args.Item is null)
+        {
+            return;
+        }
+
+        _selectedBatchId = args.Item.Id;
+    }
+
+    private string BatchRowClass(BatchModel batch, int _) =>
+        batch.Id == _selectedBatchId ? "mud-theme-primary mud-opacity-10 cursor-pointer" : "cursor-pointer";
 
     private async Task CreateBatchAsync()
     {
@@ -189,9 +299,14 @@
         }
     }
 
-    private async Task MarkReadyForSaleAsync(Guid batchId)
+    private async Task MarkReadyForSaleAsync(BatchModel batch)
     {
-        var response = await CreateApiClient().PostAsync($"/api/batches/{batchId}/mark-sold", null);
+        if (!await TableActionConfirm.ConfirmAsync("mark ready for sale", batch.BatchNumber))
+        {
+            return;
+        }
+
+        var response = await CreateApiClient().PostAsync($"/api/batches/{batch.Id}/mark-sold", null);
         if (!response.IsSuccessStatusCode)
         {
             Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Batch could not be marked ready for sale."), Severity.Error);
@@ -218,26 +333,122 @@
     private static int DaysToSale(BatchModel batch) =>
         batch.ExpectedSaleDate.DayNumber - DateOnly.FromDateTime(DateTime.Today).DayNumber;
 
+    private static int TotalGrowthDays(BatchModel batch)
+    {
+        var span = batch.ExpectedSaleDate.DayNumber - batch.ArrivalDate.DayNumber;
+        return Math.Max(span, 1);
+    }
+
+    private static int ElapsedGrowthDays(BatchModel batch)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today).DayNumber;
+        var elapsed = today - batch.ArrivalDate.DayNumber;
+        return Math.Clamp(elapsed, 0, TotalGrowthDays(batch));
+    }
+
+    private static double GrowthProgressPercent(BatchModel batch)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today).DayNumber;
+        if (today <= batch.ArrivalDate.DayNumber)
+        {
+            return 0;
+        }
+
+        if (today >= batch.ExpectedSaleDate.DayNumber)
+        {
+            return 100;
+        }
+
+        return Math.Round(100.0 * (today - batch.ArrivalDate.DayNumber) / TotalGrowthDays(batch), 1);
+    }
+
+    private static string GrowthProgressCaption(BatchModel batch)
+    {
+        var days = DaysToSale(batch);
+        if (days < 0)
+        {
+            return $"{Math.Abs(days)} day(s) past expected sale";
+        }
+
+        if (days == 0)
+        {
+            return "Expected sale day today";
+        }
+
+        return $"{days} day(s) until expected sale";
+    }
+
+    private static Color GrowthProgressColor(BatchModel batch)
+    {
+        var percent = GrowthProgressPercent(batch);
+        if (percent >= 100)
+        {
+            return Color.Success;
+        }
+
+        if (percent >= 75)
+        {
+            return Color.Warning;
+        }
+
+        return Color.Info;
+    }
+
     private static string ReadinessText(BatchModel batch)
     {
         var days = DaysToSale(batch);
-        return days switch
+        if (days <= 0)
         {
-            <= 0 => "Ready for sale",
-            <= 14 => $"{days} days left",
-            _ => "Growing"
-        };
+            return "Ready for sale";
+        }
+
+        if (days <= 14)
+        {
+            return $"{days} days left";
+        }
+
+        return "Growing";
     }
 
     private static Color ReadinessColor(BatchModel batch)
     {
         var days = DaysToSale(batch);
-        return days switch
+        if (days <= 0)
         {
-            <= 0 => Color.Success,
-            <= 14 => Color.Warning,
-            _ => Color.Info
+            return Color.Success;
+        }
+
+        if (days <= 14)
+        {
+            return Color.Warning;
+        }
+
+        return Color.Info;
+    }
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[]
+        {
+            "Batch Number", "Bird Type", "Breed", "Arrival Date", "Age (weeks)", "Current Count", "Initial Count",
+            "Survival Rate", "Expected Sale Date", "Growth %", "Status / Readiness"
         };
+        var rows = _batches.Select(x => (IReadOnlyList<string>)
+        [
+            x.BatchNumber,
+            DisplayBirdType(x.BirdType),
+            x.Breed,
+            x.ArrivalDate.ToString("MMM d, yyyy"),
+            AgeInWeeks(x).ToString(),
+            x.CurrentCount.ToString("N0"),
+            x.InitialCount.ToString("N0"),
+            $"{x.SurvivalRate:N1}%",
+            x.ExpectedSaleDate.ToString("MMM d, yyyy"),
+            $"{GrowthProgressPercent(x):N0}%",
+            ReadinessText(x)
+        ]).ToList();
+
+        return new TableExportPayload("Batch Readiness", headers, rows, $"Exported {DateTime.Now:g}");
     }
 
     private sealed class BatchForm

@@ -2,6 +2,8 @@
 @implements IAsyncDisposable
 @using System.Net.Http.Headers
 @using System.Text.Json.Serialization
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Shared
 
 @inject AuthSession AuthSession
 @inject IHttpClientFactory HttpClientFactory
@@ -11,7 +13,25 @@
 
 <PageTitle>Sales</PageTitle>
 
-<ModulePageShell Title="Sales" Subtitle="Sell eggs and birds, generate receipts, and identify top customers by revenue.">
+<ModulePageShell Title="Sales" Subtitle="@PageSubtitle">
+    @if (AuthSession.IsSystemAdmin)
+    {
+        <MudPaper Elevation="0" Class="work-surface pa-4 mb-4">
+            <MudSelect T="Guid?" Label="Farm" Value="_selectedCompanyId" ValueChanged="OnCompanyChanged" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" Clearable="true">
+                @foreach (var company in _companies)
+                {
+                    <MudSelectItem T="Guid?" Value="@company.Id">@company.Name (@company.Code)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudPaper>
+    }
+
+    @if (RequiresFarmSelection && !_selectedCompanyId.HasValue)
+    {
+        <EmptyState Icon="@Icons.Material.Filled.Agriculture" Title="Select a farm" Description="Choose a farm to view sales metrics, customers, and records." />
+    }
+    else
+    {
     <MudGrid Spacing="3">
         <MudItem xs="12" sm="6" lg="3">
             <DashboardMetricCard Label="Small Eggs" Value="@Crates(_metrics.Small)" Detail="@($"{_metrics.Small:N0} eggs available")" Icon="@Icons.Material.Filled.Egg" Color="Color.Info" />
@@ -27,7 +47,18 @@
         </MudItem>
     </MudGrid>
 
+    @if (AuthSession.IsSystemAdmin)
+    {
+        <MudGrid Spacing="3" Class="mt-2">
+            <MudItem xs="12" md="4">
+                <DashboardMetricCard Label="Total revenue" Value="@($"GHS {_totalRevenue:N2}")" Detail="filtered sales total" Icon="@Icons.Material.Filled.Payments" Color="Color.Success" />
+            </MudItem>
+        </MudGrid>
+    }
+
     <MudGrid Spacing="3" Class="mt-4">
+        @if (!AuthSession.IsSuperAdmin)
+        {
         <MudItem xs="12" lg="5">
             <MudPaper Elevation="0" Class="work-surface pa-4">
                 <MudTabs @bind-ActivePanelIndex="_saleTab" Rounded="true" Elevation="0">
@@ -150,13 +181,19 @@
                 }
             </MudPaper>
         </MudItem>
+        }
 
-        <MudItem xs="12" lg="7">
+        <MudItem xs="12" lg="@(AuthSession.IsSuperAdmin ? 12 : 7)">
             <MudGrid Spacing="3">
                 <MudItem xs="12">
                     <MudPaper Elevation="0" Class="work-surface pa-4">
                         <MudText Typo="Typo.h6" Class="font-semibold">Top 5 Customers</MudText>
-                        <MudTable Items="_leaderboard" Dense="true" Hover="true" Elevation="0">
+                        <TableExportBar Title="Top customers"
+                                        FileName="sales-leaderboard"
+                                        Class="mb-2 mt-1"
+                                        Disabled="@(!_leaderboard.Any())"
+                                        GetPayload="BuildLeaderboardExportPayload" />
+                        <MudTable Items="_leaderboard" Dense="true" Hover="true" Elevation="0" RowsPerPage="10">
                             <HeaderContent><MudTh>Customer</MudTh><MudTh>Purchases</MudTh><MudTh>Revenue</MudTh></HeaderContent>
                             <RowTemplate>
                                 <MudTd>@context.Customer</MudTd>
@@ -164,12 +201,27 @@
                                 <MudTd>GHS @context.Revenue.ToString("N2")</MudTd>
                             </RowTemplate>
                             <NoRecordsContent><MudText Typo="Typo.body2" Color="Color.Secondary">No customer sales yet.</MudText></NoRecordsContent>
+                            <PagerContent><TablePager /></PagerContent>
                         </MudTable>
                     </MudPaper>
                 </MudItem>
                 <MudItem xs="12">
                     <MudPaper Elevation="0" Class="work-surface pa-4">
-                        <MudText Typo="Typo.h6" Class="font-semibold">Sales Records</MudText>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                            <MudText Typo="Typo.h6" Class="font-semibold">Sales Records</MudText>
+                            @if (AuthSession.IsSystemAdmin)
+                            {
+                                <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
+                                    <MudButton Variant="@SalesFilterVariant("all")" OnClick="@(() => ChangeSalesFilterAsync("all"))">All</MudButton>
+                                    <MudButton Variant="@SalesFilterVariant("egg")" OnClick="@(() => ChangeSalesFilterAsync("egg"))">Eggs</MudButton>
+                                    <MudButton Variant="@SalesFilterVariant("bird")" OnClick="@(() => ChangeSalesFilterAsync("bird"))">Birds</MudButton>
+                                </MudButtonGroup>
+                            }
+                        </MudStack>
+                        <TableExportBar Title="Sales records"
+                                        FileName="sales-records"
+                                        Disabled="@(!_sales.Any())"
+                                        GetPayload="BuildSalesExportPayload" />
                         <MudTable Items="_sales" Dense="true" Hover="true" Elevation="0" Loading="_loading" RowsPerPage="10">
                             <HeaderContent><MudTh>Date</MudTh><MudTh>Type</MudTh><MudTh>Customer</MudTh><MudTh>Amount</MudTh><MudTh>Receipt</MudTh><MudTh></MudTh></HeaderContent>
                             <RowTemplate>
@@ -193,13 +245,14 @@
                                 </MudTd>
                             </RowTemplate>
                             <NoRecordsContent><EmptyState Icon="@Icons.Material.Filled.PointOfSale" Title="No sales recorded" Description="Record egg or bird sales to build the revenue history." /></NoRecordsContent>
-                            <PagerContent><MudTablePager /></PagerContent>
+                            <PagerContent><TablePager /></PagerContent>
                         </MudTable>
                     </MudPaper>
                 </MudItem>
             </MudGrid>
         </MudItem>
     </MudGrid>
+    }
 </ModulePageShell>
 
 <MudDialog @bind-Visible="_receiptDialogOpen" Options="_receiptDialogOptions">
@@ -225,6 +278,10 @@
     private List<string> _customers = [];
     private List<CustomerRank> _leaderboard = [];
     private List<SaleRow> _sales = [];
+    private List<ManagedCompany> _companies = [];
+    private Guid? _selectedCompanyId;
+    private string _salesFilter = "all";
+    private decimal _totalRevenue;
     private EggSaleForm _eggSale = new();
     private BirdSaleForm _birdSale = new();
     private Guid? _selectedEggBatchId;
@@ -245,6 +302,11 @@
     private IEnumerable<BirdSaleVariant> SelectedBirdVariants => _birdSaleBatches.FirstOrDefault(x => x.BatchId == _selectedBirdBatchId)?.Variants ?? [];
     private decimal EggSaleTotal => _eggSale.Lines.Sum(x => ((x.Crates * 30 + x.Pieces) / 30m) * x.CostPerCrate);
     private decimal BirdSaleTotal => _birdSale.BirdsSold * _birdSale.PricePerBird;
+    private bool RequiresFarmSelection => AuthSession.IsSystemAdmin;
+    private string PageSubtitle => AuthSession.IsSuperAdmin
+        ? "Read-only farm overview"
+        : "Sell eggs and birds, generate receipts, and identify top customers by revenue.";
+    private string CompanyQuery => AuthSession.IsSystemAdmin && _selectedCompanyId.HasValue ? $"company={_selectedCompanyId.Value}" : string.Empty;
     private bool HasEggStockErrors => _eggSale.Lines.Any(HasEggLineStockError);
     private string EggStockErrorSummary => _eggSale.Lines.Select(EggLineStockError).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "Reduce the egg quantity to match available stock.";
 
@@ -257,22 +319,72 @@
             Navigation.NavigateTo("/", true);
             return;
         }
-        await LoadAsync();
+        if (AuthSession.IsSystemAdmin)
+        {
+            await LoadCompaniesAsync();
+        }
+        else
+        {
+            await LoadAsync();
+        }
+
         await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadCompaniesAsync()
+    {
+        try
+        {
+            _companies = await CreateApiClient().GetFromJsonAsync<List<ManagedCompany>>("/api/companies") ?? [];
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Companies could not load: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task OnCompanyChanged(Guid? companyId)
+    {
+        _selectedCompanyId = companyId;
+        if (companyId.HasValue)
+        {
+            await LoadAsync();
+        }
+        else
+        {
+            _metrics = new();
+            _batches = [];
+            _birdSaleBatches = [];
+            _customers = [];
+            _leaderboard = [];
+            _sales = [];
+            _totalRevenue = 0;
+        }
+    }
+
+    private async Task ChangeSalesFilterAsync(string filter)
+    {
+        _salesFilter = filter;
+        await LoadSalesAsync();
     }
 
     private async Task LoadAsync()
     {
+        if (RequiresFarmSelection && !_selectedCompanyId.HasValue)
+        {
+            return;
+        }
+
         _loading = true;
         try
         {
             var client = CreateApiClient();
-            _metrics = await client.GetFromJsonAsync<SalesMetrics>("/api/sales/metrics") ?? new();
-            _batches = await client.GetFromJsonAsync<List<BatchOption>>("/api/batches/active") ?? [];
-            _birdSaleBatches = await client.GetFromJsonAsync<List<BirdSaleBatch>>("/api/batches/bird-sale-options") ?? [];
-            _customers = await client.GetFromJsonAsync<List<string>>("/api/sales/customers") ?? [];
-            _leaderboard = await client.GetFromJsonAsync<List<CustomerRank>>("/api/sales/leaderboard") ?? [];
-            _sales = await client.GetFromJsonAsync<List<SaleRow>>("/api/sales") ?? [];
+            _metrics = await client.GetFromJsonAsync<SalesMetrics>(WithCompany("/api/sales/metrics")) ?? new();
+            _batches = await client.GetFromJsonAsync<List<BatchOption>>(WithCompany("/api/batches/active")) ?? [];
+            _birdSaleBatches = await client.GetFromJsonAsync<List<BirdSaleBatch>>(WithCompany("/api/batches/bird-sale-options")) ?? [];
+            _customers = await client.GetFromJsonAsync<List<string>>(WithCompany("/api/sales/customers")) ?? [];
+            _leaderboard = await client.GetFromJsonAsync<List<CustomerRank>>(WithCompany("/api/sales/leaderboard")) ?? [];
+            await LoadSalesAsync();
         }
         catch (Exception ex)
         {
@@ -282,6 +394,72 @@
         {
             _loading = false;
         }
+    }
+
+    private async Task LoadSalesAsync()
+    {
+        var filter = AuthSession.IsSystemAdmin ? _salesFilter : "all";
+        var client = CreateApiClient();
+        const int pageSize = 50;
+        var page = 1;
+        var all = new List<SaleRow>();
+        var total = 0;
+        decimal totalRevenue = 0;
+
+        while (true)
+        {
+            var response = await client.GetFromJsonAsync<PagedSalesResponse>(
+                WithCompany($"/api/sales?type={filter}&page={page}&pageSize={pageSize}"));
+            var items = response?.Items ?? [];
+            total = response?.Total ?? 0;
+            totalRevenue = response?.TotalRevenue ?? 0;
+            if (items.Count == 0)
+            {
+                break;
+            }
+
+            all.AddRange(items);
+            if (all.Count >= total)
+            {
+                break;
+            }
+
+            page++;
+        }
+
+        _sales = all;
+        _totalRevenue = totalRevenue;
+    }
+
+    private Variant SalesFilterVariant(string filter) =>
+        string.Equals(_salesFilter, filter, StringComparison.OrdinalIgnoreCase) ? Variant.Filled : Variant.Outlined;
+
+    private TableExportPayload BuildSalesExportPayload()
+    {
+        var headers = new[] { "Date", "Type", "Customer", "Amount", "Receipt" };
+        var rows = _sales.Select(x => (IReadOnlyList<string>)
+        [
+            x.Date.ToString("yyyy-MM-dd"),
+            x.Type,
+            x.Customer,
+            x.Amount.ToString("N2"),
+            x.Receipt ?? string.Empty
+        ]).ToList();
+
+        return new TableExportPayload("Sales Records", headers, rows, $"Exported {DateTime.Now:g}");
+    }
+
+    private TableExportPayload BuildLeaderboardExportPayload()
+    {
+        var headers = new[] { "Customer", "Purchases", "Revenue" };
+        var rows = _leaderboard.Select(x => (IReadOnlyList<string>)
+        [
+            x.Customer,
+            x.Purchases.ToString("N0"),
+            x.Revenue.ToString("N2")
+        ]).ToList();
+
+        return new TableExportPayload("Top Customers", headers, rows, $"Exported {DateTime.Now:g}");
     }
 
     private Task<IEnumerable<string>> SearchCustomers(string value, CancellationToken cancellationToken)
@@ -396,7 +574,8 @@
         try
         {
             var client = CreateApiClient();
-            var pdfUrl = new Uri(client.BaseAddress!, $"/api/sales/eggs/{saleId}/receipt.pdf").ToString();
+            var receiptPath = WithCompany($"/api/sales/eggs/{saleId}/receipt.pdf");
+            var pdfUrl = new Uri(client.BaseAddress!, receiptPath).ToString();
             await RevokeReceiptPdfUrlAsync();
             _receiptPdfUrl = await JSRuntime.InvokeAsync<string>("poultryFarmUi.loadAuthenticatedPdfObjectUrl", pdfUrl, AuthSession.Token);
             _receiptPdfFileName = string.IsNullOrWhiteSpace(receiptId) ? "receipt.pdf" : $"{receiptId}.pdf";
@@ -445,6 +624,16 @@
         var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
         return client;
+    }
+
+    private string WithCompany(string path)
+    {
+        if (string.IsNullOrEmpty(CompanyQuery))
+        {
+            return path;
+        }
+
+        return path.Contains('?', StringComparison.Ordinal) ? $"{path}&{CompanyQuery}" : $"{path}?{CompanyQuery}";
     }
 
     private static string Crates(int eggs) => $"{eggs / 30m:N2} crates";
@@ -503,6 +692,7 @@
     private sealed record BatchOption(Guid Id, string BatchNumber, int BirdType, DateOnly ArrivalDate, string Breed, string? Supplier, DateOnly ExpectedSaleDate, int Status, int InitialCount, int CurrentCount, decimal SurvivalRate, List<BatchVariantOption> Variants);
     private sealed record BatchVariantOption(Guid Id, int Color, int EggColor, int InitialCount, int CurrentCount, string? Notes);
     private sealed record CustomerRank(string Customer, decimal Revenue, int Purchases);
+    private sealed record PagedSalesResponse(List<SaleRow> Items, int Total, int Page, int PageSize, decimal TotalRevenue);
     private sealed record SaleRow(Guid Id, string Type, DateOnly Date, string Customer, decimal Amount, string Receipt);
     private sealed record SaleReceipt(Guid Id, string ReceiptId, string BuyerName, DateOnly SaleDate, decimal GrandTotal, int Eggs, int Crates, int Pieces, IReadOnlyCollection<SaleReceiptLine> Items);
     private sealed record SaleReceiptLine(int Size, int Eggs, int Crates, int Pieces, decimal CostPerCrate, decimal LineTotal);

@@ -18,6 +18,8 @@ builder.Services.AddMudServices(config =>
     config.SnackbarConfiguration.ShowTransitionDuration = 150;
 });
 builder.Services.AddScoped<AuthSession>();
+builder.Services.AddScoped<TableActionConfirm>();
+builder.Services.AddScoped<NavBadgeState>();
 builder.Services.AddScoped<ProtectedSessionStorage>();
 builder.Services.AddHttpClient("PoultryFarm.Api", client =>
 {

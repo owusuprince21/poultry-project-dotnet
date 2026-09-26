@@ -10,6 +10,7 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
 
 <PageTitle>Users & Roles</PageTitle>
 
@@ -96,6 +97,10 @@ else
             <MudItem xs="12" lg="8">
                 <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
                     <MudText Typo="Typo.h6" Class="mb-3">User Access</MudText>
+                    <TableExportBar Title="User access"
+                                    FileName="users"
+                                    Disabled="@(!VisibleUsers.Any())"
+                                    GetPayload="BuildExportPayload" />
                     <MudTable Items="VisibleUsers" Dense="true" Hover="true" RowsPerPage="10">
                         <HeaderContent>
                             <MudTh>Name</MudTh>
@@ -124,6 +129,10 @@ else
                             <MudTd>
                                 <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                                     <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => BeginEdit(context))">Edit</MudMenuItem>
+                                    @if (context.Role == "worker")
+                                    {
+                                        <MudMenuItem Icon="@Icons.Material.Filled.LockOpen" OnClick="@(() => OpenPermissionsAsync(context))">Page access</MudMenuItem>
+                                    }
                                     @if (context.IsActive)
                                     {
                                         <MudMenuItem Icon="@Icons.Material.Filled.Block" OnClick="@(() => ToggleStatusAsync(context))">Block</MudMenuItem>
@@ -140,12 +149,37 @@ else
                             <MudText Typo="Typo.body2" Color="Color.Secondary">No farm admin or worker accounts found.</MudText>
                         </NoRecordsContent>
                         <PagerContent>
-                            <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                            <TablePager />
                         </PagerContent>
                     </MudTable>
                 </MudPaper>
             </MudItem>
         </MudGrid>
+
+        <MudDialog @bind-Visible="_permissionsDialogVisible" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+            <TitleContent>
+                <MudText Typo="Typo.h6">Page access for @_permissionsUser?.Username</MudText>
+            </TitleContent>
+            <DialogContent>
+                <MudStack Spacing="1">
+                    @foreach (var pageOption in _assignablePages)
+                    {
+                        <MudCheckBox T="bool"
+                                     Value="@_selectedPages.Contains(pageOption.Key)"
+                                     ValueChanged="@(v => TogglePage(pageOption.Key, v))"
+                                     Label="@pageOption.Label"
+                                     Color="Color.Primary"
+                                     Dense="true" />
+                    }
+                </MudStack>
+            </DialogContent>
+            <DialogActions>
+                <MudButton OnClick="@(() => _permissionsDialogVisible = false)">Cancel</MudButton>
+                <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_savingPermissions" OnClick="SavePermissionsAsync">
+                    @(_savingPermissions ? "Saving..." : "Save")
+                </MudButton>
+            </DialogActions>
+        </MudDialog>
     </ModulePageShell>
 }
 
@@ -157,6 +191,22 @@ else
     private bool _loaded;
     private bool _savingUser;
     private bool _showPassword;
+    private bool _permissionsDialogVisible;
+    private bool _savingPermissions;
+    private ManagedUser? _permissionsUser;
+    private HashSet<string> _selectedPages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly (string Key, string Label)[] _assignablePages =
+    [
+        ("dashboard", "Dashboard"),
+        ("production", "Egg Production"),
+        ("feed", "Feed Management"),
+        ("health", "Bird Health"),
+        ("sales", "Sales"),
+        ("marketplace", "Marketplace"),
+        ("daily-summary", "Daily Summary"),
+        ("farm-assistance", "Farm Assistance"),
+        ("settings", "Settings")
+    ];
 
     private bool CanManageWorkers => AuthSession.IsSystemAdmin || AuthSession.IsFarmAdmin;
 
@@ -297,8 +347,79 @@ else
         }
     }
 
-    private void BeginEdit(ManagedUser user)
+    private async Task OpenPermissionsAsync(ManagedUser user)
     {
+        if (!await TableActionConfirm.ConfirmAsync("manage page access for", UserFullName(user)))
+        {
+            return;
+        }
+
+        _permissionsUser = user;
+        var client = CreateApiClient();
+        try
+        {
+            var keys = await client.GetFromJsonAsync<List<string>>($"/api/users/{user.Id}/page-permissions") ?? [];
+            _selectedPages = keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _permissionsDialogVisible = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "Permissions could not be loaded.", client.BaseAddress), Severity.Error);
+        }
+    }
+
+    private void TogglePage(string key, bool enabled)
+    {
+        if (enabled)
+        {
+            _selectedPages.Add(key);
+        }
+        else
+        {
+            _selectedPages.Remove(key);
+        }
+    }
+
+    private async Task SavePermissionsAsync()
+    {
+        if (_permissionsUser is null)
+        {
+            return;
+        }
+
+        _savingPermissions = true;
+        try
+        {
+            var client = CreateApiClient();
+            var response = await client.PutAsJsonAsync(
+                $"/api/users/{_permissionsUser.Id}/page-permissions",
+                new { pageKeys = _selectedPages.ToArray() });
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(ApiErrorFormatter.Format(await response.Content.ReadAsStringAsync(), "Permissions could not be saved."), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Worker page access updated.", Severity.Success);
+            _permissionsDialogVisible = false;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "Permissions could not be saved.", CreateApiClient().BaseAddress), Severity.Error);
+        }
+        finally
+        {
+            _savingPermissions = false;
+        }
+    }
+
+    private async Task BeginEdit(ManagedUser user)
+    {
+        if (!await TableActionConfirm.ConfirmAsync("edit", UserFullName(user)))
+        {
+            return;
+        }
+
         _editingUser = user;
         _userForm = new CreateManagedUserModel
         {
@@ -324,6 +445,12 @@ else
 
     private async Task ToggleStatusAsync(ManagedUser user)
     {
+        var actionLabel = user.IsActive ? "block" : "activate";
+        if (!await TableActionConfirm.ConfirmAsync(actionLabel, UserFullName(user)))
+        {
+            return;
+        }
+
         try
         {
             var client = CreateApiClient();
@@ -346,6 +473,11 @@ else
 
     private async Task DeleteUserAsync(ManagedUser user)
     {
+        if (!await TableActionConfirm.ConfirmAsync("delete", UserFullName(user)))
+        {
+            return;
+        }
+
         try
         {
             var client = CreateApiClient();
@@ -374,6 +506,22 @@ else
         var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
         return client;
+    }
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Name", "Username", "Company", "Role", "Status", "Password" };
+        var rows = VisibleUsers.Select(x => (IReadOnlyList<string>)
+        [
+            UserFullName(x),
+            x.Username,
+            x.CompanyName ?? "System",
+            DisplayRole(x.Role),
+            x.IsActive ? "Active" : "Blocked",
+            x.MustChangePassword ? "Must change" : "Changed"
+        ]).ToList();
+
+        return new TableExportPayload("User Access", headers, rows, $"Exported {DateTime.Now:g}");
     }
 
     private static string UserFullName(ManagedUser user)

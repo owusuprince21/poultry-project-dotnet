@@ -7,11 +7,6 @@ namespace PoultryFarm.Api.Services;
 public sealed class AiProviderClient(HttpClient httpClient, IConfiguration configuration, ILogger<AiProviderClient> logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly TimeSpan[] RetryDelays =
-    [
-        TimeSpan.FromMilliseconds(700),
-        TimeSpan.FromSeconds(2)
-    ];
 
     public async Task<string> GenerateAsync(string input, CancellationToken cancellationToken = default)
     {
@@ -61,42 +56,51 @@ public sealed class AiProviderClient(HttpClient httpClient, IConfiguration confi
             throw new InvalidOperationException("Gemini API key is missing. Set Gemini:ApiKey or GEMINI_API_KEY.");
         }
 
-        var configuredModel = configuration["Gemini:Model"] ?? "gemini-3.5-flash";
-        var modelsToTry = new[]
+        var configuredModel = configuration["Gemini:Model"] ?? "gemini-3.1-flash-lite";
+        // Prefer lite first under current Google capacity pressure; heavier flash models often return 503.
+        var modelsToTry = new List<string>
         {
             configuredModel,
-            "gemini-3.5-flash",
-            "gemini-flash-latest",
-            "gemini-3.1-flash-lite"
+            "gemini-3.1-flash-lite",
+            "gemini-3.8-flash",
+            "gemini-flash-latest"
         }
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         string? lastFailure = null;
+        Exception? lastException = null;
         foreach (var model in modelsToTry)
         {
-            for (var attempt = 0; attempt <= RetryDelays.Length; attempt++)
-            {
-                var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(model)}:generateContent";
+            var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(model)}:generateContent";
 
-                using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
-                request.Headers.Add("x-goog-api-key", apiKey);
-                request.Content = CreateJsonContent(new
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+            request.Headers.Add("x-goog-api-key", apiKey);
+            request.Content = CreateJsonContent(new
+            {
+                contents = new[]
                 {
-                    contents = new[]
+                    new
                     {
-                        new
+                        role = "user",
+                        parts = new[]
                         {
-                            role = "user",
-                            parts = new[]
-                            {
-                                new { text = input }
-                            }
+                            new { text = input }
                         }
                     }
-                });
+                },
+                generationConfig = new
+                {
+                    temperature = 1.0,
+                    maxOutputTokens = 768,
+                    // Keep Flash thinking light so farm replies stay quick.
+                    thinkingConfig = new { thinkingLevel = "low" }
+                }
+            });
 
+            try
+            {
                 using var response = await httpClient.SendAsync(request, cancellationToken);
                 var result = await response.Content.ReadAsStringAsync(cancellationToken);
 
@@ -106,16 +110,27 @@ public sealed class AiProviderClient(HttpClient httpClient, IConfiguration confi
                 }
 
                 lastFailure = result;
-                logger.LogWarning("Gemini request failed for model {Model} on attempt {Attempt} with {StatusCode}: {Body}", model, attempt + 1, response.StatusCode, result);
+                logger.LogWarning("Gemini request failed for model {Model} with {StatusCode}: {Body}", model, response.StatusCode, result);
 
-                if (IsRetryableStatusCode((int)response.StatusCode) && attempt < RetryDelays.Length)
+                // Auth failures are fatal; everything else (503, 404 retired model, 400 config) tries the next model.
+                if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
                 {
-                    await Task.Delay(RetryDelays[attempt], cancellationToken);
-                    continue;
+                    break;
                 }
 
-                break;
+                continue;
             }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                lastException = ex;
+                logger.LogWarning(ex, "Gemini request timed out for model {Model}.", model);
+                throw;
+            }
+        }
+
+        if (lastException is not null)
+        {
+            throw lastException;
         }
 
         throw new AiProviderException("Gemini", lastFailure ?? "Gemini request failed.");
@@ -170,9 +185,25 @@ public sealed class AiProviderClient(HttpClient httpClient, IConfiguration confi
             return null;
         }
 
-        return parts[0].TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String
-            ? text.GetString()
-            : null;
+        // Thinking models may return non-text parts first; collect visible text parts.
+        var texts = new List<string>();
+        foreach (var part in parts.EnumerateArray())
+        {
+            if (part.TryGetProperty("thought", out var thought) &&
+                thought.ValueKind is JsonValueKind.True)
+            {
+                continue;
+            }
+
+            if (part.TryGetProperty("text", out var text) &&
+                text.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(text.GetString()))
+            {
+                texts.Add(text.GetString()!);
+            }
+        }
+
+        return texts.Count == 0 ? null : string.Join("\n", texts);
     }
 
     private static string? FindFirstText(JsonElement element)

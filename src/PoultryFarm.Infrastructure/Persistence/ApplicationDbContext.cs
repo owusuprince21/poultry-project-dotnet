@@ -9,6 +9,8 @@ using PoultryFarm.Domain.Communication;
 using PoultryFarm.Domain.Companies;
 using PoultryFarm.Domain.Feed;
 using PoultryFarm.Domain.Health;
+using PoultryFarm.Domain.Identity;
+using PoultryFarm.Domain.Marketplace;
 using PoultryFarm.Domain.Production;
 using PoultryFarm.Domain.Sales;
 using PoultryFarm.Domain.Schedules;
@@ -36,18 +38,53 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
     public DbSet<ChatMessageReaction> ChatMessageReactions => Set<ChatMessageReaction>();
+    public DbSet<FarmActivityPost> FarmActivityPosts => Set<FarmActivityPost>();
+    public DbSet<FarmActivityComment> FarmActivityComments => Set<FarmActivityComment>();
+    public DbSet<FarmActivityCommentReaction> FarmActivityCommentReactions => Set<FarmActivityCommentReaction>();
+    public DbSet<FarmActivityLike> FarmActivityLikes => Set<FarmActivityLike>();
+    public DbSet<MarketplaceMediaAsset> MarketplaceMediaAssets => Set<MarketplaceMediaAsset>();
     public DbSet<FarmAssistanceMessage> FarmAssistanceMessages => Set<FarmAssistanceMessage>();
     public DbSet<AppNotification> AppNotifications => Set<AppNotification>();
+    public DbSet<FarmerRegistration> FarmerRegistrations => Set<FarmerRegistration>();
+    public DbSet<MarketplaceListing> MarketplaceListings => Set<MarketplaceListing>();
+    public DbSet<MarketplaceInquiry> MarketplaceInquiries => Set<MarketplaceInquiry>();
+    public DbSet<MarketplaceConversation> MarketplaceConversations => Set<MarketplaceConversation>();
+    public DbSet<PasswordInvite> PasswordInvites => Set<PasswordInvite>();
+    public DbSet<WorkerPagePermission> WorkerPagePermissions => Set<WorkerPagePermission>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
         builder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
         ConfigureIdentity(builder);
+        ConfigurePostgreSqlConcurrency(builder);
 
         foreach (var foreignKey in builder.Model.GetEntityTypes().SelectMany(e => e.GetForeignKeys()))
         {
             foreignKey.DeleteBehavior = DeleteBehavior.Restrict;
+        }
+    }
+
+    private static void ConfigurePostgreSqlConcurrency(ModelBuilder builder)
+    {
+        foreach (var entityType in builder.Model.GetEntityTypes())
+        {
+            if (entityType.ClrType is null || !typeof(AuditableEntity).IsAssignableFrom(entityType.ClrType))
+            {
+                continue;
+            }
+
+            var entity = builder.Entity(entityType.ClrType);
+            if (entityType.FindProperty(nameof(AuditableEntity.RowVersion)) is not null)
+            {
+                entity.Ignore(nameof(AuditableEntity.RowVersion));
+            }
+
+            // PostgreSQL system column (replaces SQL Server rowversion).
+            entity.Property<uint>("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
         }
     }
 

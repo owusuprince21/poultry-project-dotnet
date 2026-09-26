@@ -166,7 +166,11 @@ public sealed record ChatContact(
     bool IsOnline,
     int UnreadCount = 0,
     string? LastMessagePreview = null,
-    DateTimeOffset? LastMessageAt = null);
+    DateTimeOffset? LastMessageAt = null,
+    string? ListingTitle = null,
+    string? Email = null,
+    string? Phone = null,
+    bool CanReply = true);
 
 public sealed record TeamChatMessage(
     Guid Id,

@@ -25,12 +25,12 @@ else if (!AuthSession.IsSuperAdmin)
 }
 else
 {
-    <ModulePageShell Title="Audit Logs" Subtitle="Trace operational and security-sensitive actions.">
+    <ModulePageShell Title="Audit Logs" Subtitle="Trace platform actions across farms, users, registrations, and operations.">
         <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
             <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
                 <div>
                     <MudText Typo="Typo.h6">Enterprise Audit Trail</MudText>
-                    <MudText Typo="Typo.body2" Color="Color.Secondary">Track company and user management actions with actor, target, and tenant context.</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Covers farm registrations, identity changes, and operational actions by sub-admins and other dashboard users.</MudText>
                 </div>
                 <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
                     <MudDatePicker @bind-Date="_fromDate" Label="From" Variant="Variant.Outlined" />
@@ -41,6 +41,10 @@ else
                 </MudStack>
             </MudStack>
 
+            <TableExportBar Title="Audit logs"
+                            FileName="audit-logs"
+                            Disabled="@(!_logs.Any())"
+                            GetPayload="BuildExportPayload" />
             <MudTable Items="_logs" Dense="true" Hover="true" RowsPerPage="10">
                 <HeaderContent>
                     <MudTh>Timestamp</MudTh>
@@ -71,7 +75,7 @@ else
                     <MudText Typo="Typo.body2" Color="Color.Secondary">No audit entries found.</MudText>
                 </NoRecordsContent>
                 <PagerContent>
-                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                    <TablePager />
                 </PagerContent>
             </MudTable>
         </MudPaper>
@@ -136,6 +140,9 @@ else
         category switch
         {
             "Company" => Color.Primary,
+            "FarmRegistration" or "Marketplace" => Color.Secondary,
+            "Operations" => Color.Warning,
+            "Sales" => Color.Tertiary,
             "System User" => Color.Info,
             "Identity" => Color.Success,
             _ => Color.Default
@@ -146,6 +153,24 @@ else
         _fromDate = null;
         _toDate = null;
         await LoadAsync();
+    }
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Timestamp", "Event", "Actor", "Role", "Target", "Company", "Category", "Detail" };
+        var rows = _logs.Select(x => (IReadOnlyList<string>)
+        [
+            x.Timestamp.LocalDateTime.ToString("MMM d, yyyy h:mm tt"),
+            x.Event,
+            x.Actor,
+            x.Role,
+            x.Target,
+            x.CompanyName ?? "Platform",
+            x.Category,
+            x.Detail
+        ]).ToList();
+
+        return new TableExportPayload("Audit Logs", headers, rows, $"Exported {DateTime.Now:g}");
     }
 
     private string DateQuery

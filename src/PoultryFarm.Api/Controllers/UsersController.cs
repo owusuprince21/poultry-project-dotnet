@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using PoultryFarm.Api.Authorization;
 using PoultryFarm.Domain.Audit;
 using PoultryFarm.Domain.Common;
+using PoultryFarm.Domain.Identity;
+using PoultryFarm.Domain.Marketplace;
 using PoultryFarm.Infrastructure.Identity;
 using PoultryFarm.Infrastructure.Persistence;
 
@@ -744,6 +746,87 @@ public sealed class UsersController(
 
         return user.FarmRole == UserRole.Admin ? AppRoles.FarmAdmin : AppRoles.Worker;
     }
+
+    [HttpGet("{id:guid}/page-permissions")]
+    public async Task<ActionResult<IReadOnlyCollection<string>>> GetPagePermissions(Guid id, CancellationToken cancellationToken)
+    {
+        if (!PermissionHelpers.IsSystemAdmin(User) && !PermissionHelpers.IsCompanyAdmin(User))
+        {
+            return Forbid();
+        }
+
+        var user = await userManager.FindByIdAsync(id.ToString());
+        if (user is null || user.IsDeleted)
+        {
+            return NotFound(new { detail = "User was not found." });
+        }
+
+        if (!PermissionHelpers.IsSystemAdmin(User) && user.CompanyId != GetCurrentCompanyId())
+        {
+            return Forbid();
+        }
+
+        var keys = await dbContext.WorkerPagePermissions
+            .AsNoTracking()
+            .Where(x => x.UserId == id)
+            .Select(x => x.PageKey)
+            .ToListAsync(cancellationToken);
+
+        return Ok(keys);
+    }
+
+    [HttpPut("{id:guid}/page-permissions")]
+    public async Task<ActionResult<IReadOnlyCollection<string>>> SetPagePermissions(
+        Guid id,
+        SetWorkerPagePermissionsRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!PermissionHelpers.IsSystemAdmin(User) && !PermissionHelpers.IsCompanyAdmin(User))
+        {
+            return Forbid();
+        }
+
+        var user = await userManager.FindByIdAsync(id.ToString());
+        if (user is null || user.IsDeleted)
+        {
+            return NotFound(new { detail = "User was not found." });
+        }
+
+        if (user.FarmRole != UserRole.Worker || user.IsSystemAdmin)
+        {
+            return BadRequest(new { detail = "Page permissions can only be set for workers." });
+        }
+
+        if (!PermissionHelpers.IsSystemAdmin(User) && user.CompanyId != GetCurrentCompanyId())
+        {
+            return Forbid();
+        }
+
+        var requested = (request.PageKeys ?? [])
+            .Select(x => x.Trim().ToLowerInvariant())
+            .Where(x => WorkerPageKeys.Assignable.Contains(x))
+            .Distinct()
+            .ToList();
+
+        var existing = await dbContext.WorkerPagePermissions
+            .Where(x => x.UserId == id)
+            .ToListAsync(cancellationToken);
+
+        dbContext.WorkerPagePermissions.RemoveRange(existing);
+
+        foreach (var key in requested)
+        {
+            dbContext.WorkerPagePermissions.Add(new WorkerPagePermission
+            {
+                UserId = id,
+                PageKey = key,
+                CreatedByUserId = GetCurrentUserId()
+            });
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return Ok(requested);
+    }
 }
 
 public abstract record CreateUserRequest(
@@ -808,3 +891,5 @@ public sealed record UserManagementDto(
     bool IsActive,
     bool MustChangePassword,
     DateTimeOffset CreatedAt);
+
+public sealed record SetWorkerPagePermissionsRequest(IReadOnlyCollection<string>? PageKeys);

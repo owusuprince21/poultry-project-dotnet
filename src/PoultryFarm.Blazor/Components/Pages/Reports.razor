@@ -1,69 +1,145 @@
 @page "/reports"
 @using System.Net.Http.Headers
+@using System.Net.Http.Json
 @using System.Text.Json
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Shared
 
 @inject AuthSession AuthSession
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
 @inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
 
 <PageTitle>Reports</PageTitle>
 
-<ModulePageShell Title="Reports" Subtitle="Generate operational reports by production, feed, health, and sales over a selected date range.">
-    <MudPaper Elevation="0" Class="work-surface pa-4">
-        <MudGrid Spacing="2">
-            <MudItem xs="12" md="3">
-                <MudSelect T="string" @bind-Value="_operation" Label="Operation" Variant="Variant.Outlined" Margin="Margin.Dense">
-                    <MudSelectItem Value="@("production")">Egg Production</MudSelectItem>
-                    <MudSelectItem Value="@("feed")">Feed Management</MudSelectItem>
-                    <MudSelectItem Value="@("health")">Bird Health</MudSelectItem>
-                    <MudSelectItem Value="@("sales")">Sales</MudSelectItem>
-                </MudSelect>
-            </MudItem>
-            <MudItem xs="12" md="3"><MudDatePicker @bind-Date="_from" Label="From" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
-            <MudItem xs="12" md="3"><MudDatePicker @bind-Date="_to" Label="To" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
-            <MudItem xs="12" md="3"><MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Assessment" OnClick="GenerateAsync">Generate Report</MudButton></MudItem>
-        </MudGrid>
-    </MudPaper>
+@if (!_ready)
+{
+    <PageLoader Message="Loading reports..." />
+}
+else if (AuthSession.IsSuperAdmin)
+{
+    <ModulePageShell Title="Reports" Subtitle="Select a platform report, spool the data, then export to Excel or PDF.">
+        <MudPaper Elevation="0" Class="work-surface pa-4">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="4">
+                    <MudSelect T="string" @bind-Value="_platformType" Label="Report" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        <MudSelectItem Value="@("audit")">Audit Logs</MudSelectItem>
+                        <MudSelectItem Value="@("approvals")">Farm Approvals</MudSelectItem>
+                        <MudSelectItem Value="@("farms")">Farms</MudSelectItem>
+                        <MudSelectItem Value="@("users")">Users &amp; Roles</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudDatePicker @bind-Date="_from" Label="From" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudDatePicker @bind-Date="_to" Label="To" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" />
+                </MudItem>
+                <MudItem xs="12" md="2" Class="d-flex align-center">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" StartIcon="@Icons.Material.Filled.Assessment" Disabled="_loading" OnClick="GeneratePlatformAsync">
+                        @(_loading ? "Spooling..." : "Spool")
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
 
-    <MudGrid Spacing="3" Class="mt-4">
-        <MudItem xs="12" sm="6" lg="3">
-            <DashboardMetricCard Label="Rows" Value="@_rows.Count.ToString("N0")" Detail="matching report entries" Icon="@Icons.Material.Filled.TableRows" Color="Color.Primary" />
-        </MudItem>
-        <MudItem xs="12" sm="6" lg="3">
-            <DashboardMetricCard Label="Total" Value="@_rows.Sum(x => x.Total).ToString("N2")" Detail="operation total" Icon="@Icons.Material.Filled.QueryStats" Color="Color.Success" />
-        </MudItem>
-        <MudItem xs="12" sm="6" lg="3">
-            <DashboardMetricCard Label="Window" Value="@($"{_from:MMM d}")" Detail="@($"to {_to:MMM d, yyyy}")" Icon="@Icons.Material.Filled.DateRange" Color="Color.Info" />
-        </MudItem>
-        <MudItem xs="12" sm="6" lg="3">
-            <DashboardMetricCard Label="Report" Value="@ReportTitle" Detail="selected operation" Icon="@Icons.Material.Filled.Assessment" Color="Color.Warning" />
-        </MudItem>
-    </MudGrid>
+        <MudStack Row="true" Spacing="2" Class="mt-4" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.subtitle1" Class="font-semibold">@PlatformReportTitle</MudText>
+            <MudSpacer />
+            <MudButton Variant="Variant.Outlined" Color="Color.Success" StartIcon="@Icons.Material.Filled.TableView" Disabled="@(!_platformRows.Any())" OnClick="ExportExcelAsync">Excel</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.PictureAsPdf" Disabled="@(!_platformRows.Any())" OnClick="ExportPdfAsync">PDF</MudButton>
+        </MudStack>
 
-    <MudPaper Elevation="0" Class="work-surface pa-4 mt-4">
-        <MudText Typo="Typo.h6" Class="font-semibold">@ReportTitle Report</MudText>
-        <MudTable Items="_rows" Dense="true" Hover="true" Elevation="0" Loading="_loading" RowsPerPage="10" Class="mt-3">
-            <HeaderContent><MudTh>Date</MudTh><MudTh>Status / Segment</MudTh><MudTh>Total</MudTh></HeaderContent>
-            <RowTemplate>
-                <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
-                <MudTd>@context.Status</MudTd>
-                <MudTd>@context.Total.ToString("N2")</MudTd>
-            </RowTemplate>
-            <NoRecordsContent><EmptyState Icon="@Icons.Material.Filled.Assessment" Title="No report data" Description="Choose an operation and date range to generate report rows." /></NoRecordsContent>
-            <PagerContent><MudTablePager /></PagerContent>
-        </MudTable>
-    </MudPaper>
-</ModulePageShell>
+        <MudPaper Elevation="0" Class="work-surface pa-4 mt-3">
+            <MudTable Items="_platformRows" Dense="true" Hover="true" Elevation="0" Loading="_loading" RowsPerPage="15">
+                <HeaderContent>
+                    @foreach (var header in _platformHeaders)
+                    {
+                        <MudTh>@header</MudTh>
+                    }
+                </HeaderContent>
+                <RowTemplate>
+                    @foreach (var cell in context)
+                    {
+                        <MudTd>@cell</MudTd>
+                    }
+                </RowTemplate>
+                <NoRecordsContent>
+                    <EmptyState Icon="@Icons.Material.Filled.Assessment" Title="No report data" Description="Choose a report and click Spool to load rows for export." />
+                </NoRecordsContent>
+                <PagerContent><TablePager /></PagerContent>
+            </MudTable>
+        </MudPaper>
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Reports" Subtitle="Generate operational reports by production, feed, health, and sales over a selected date range.">
+        <MudPaper Elevation="0" Class="work-surface pa-4">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="3">
+                    <MudSelect T="string" @bind-Value="_operation" Label="Operation" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        <MudSelectItem Value="@("production")">Egg Production</MudSelectItem>
+                        <MudSelectItem Value="@("feed")">Feed Management</MudSelectItem>
+                        <MudSelectItem Value="@("health")">Bird Health</MudSelectItem>
+                        <MudSelectItem Value="@("sales")">Sales</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="3"><MudDatePicker @bind-Date="_from" Label="From" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+                <MudItem xs="12" md="3"><MudDatePicker @bind-Date="_to" Label="To" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+                <MudItem xs="12" md="3"><MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Assessment" OnClick="GenerateOperationalAsync">Generate Report</MudButton></MudItem>
+            </MudGrid>
+        </MudPaper>
+
+        <MudStack Row="true" Spacing="2" Class="mt-4" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.subtitle1" Class="font-semibold">@OperationalReportTitle Report</MudText>
+            <MudSpacer />
+            <MudButton Variant="Variant.Outlined" Color="Color.Success" StartIcon="@Icons.Material.Filled.TableView" Disabled="@(!_opRows.Any())" OnClick="ExportOperationalExcelAsync">Excel</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.PictureAsPdf" Disabled="@(!_opRows.Any())" OnClick="ExportOperationalPdfAsync">PDF</MudButton>
+        </MudStack>
+
+        <MudPaper Elevation="0" Class="work-surface pa-4 mt-3">
+            <MudTable Items="_opRows" Dense="true" Hover="true" Elevation="0" Loading="_loading" RowsPerPage="10">
+                <HeaderContent><MudTh>Date</MudTh><MudTh>Status / Segment</MudTh><MudTh>Total</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
+                    <MudTd>@context.Status</MudTd>
+                    <MudTd>@context.Total.ToString("N2")</MudTd>
+                </RowTemplate>
+                <NoRecordsContent><EmptyState Icon="@Icons.Material.Filled.Assessment" Title="No report data" Description="Choose an operation and date range to generate report rows." /></NoRecordsContent>
+                <PagerContent><TablePager /></PagerContent>
+            </MudTable>
+        </MudPaper>
+    </ModulePageShell>
+}
 
 @code {
+    private bool _ready;
+    private bool _loading;
+    private string _platformType = "audit";
     private string _operation = "production";
     private DateTime? _from = DateTime.Today.AddDays(-30);
     private DateTime? _to = DateTime.Today;
-    private List<ReportRow> _rows = [];
-    private bool _loading;
+    private List<string> _platformHeaders = [];
+    private List<string[]> _platformRows = [];
+    private List<ReportRow> _opRows = [];
 
-    private string ReportTitle => _operation switch { "feed" => "Feed", "health" => "Bird Health", "sales" => "Sales", _ => "Egg Production" };
+    private string PlatformReportTitle => _platformType switch
+    {
+        "approvals" => "Farm Approvals",
+        "farms" => "Farms",
+        "users" => "Users & Roles",
+        _ => "Audit Logs"
+    };
+
+    private string OperationalReportTitle => _operation switch
+    {
+        "feed" => "Feed",
+        "health" => "Bird Health",
+        "sales" => "Sales",
+        _ => "Egg Production"
+    };
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -74,11 +150,152 @@
             Navigation.NavigateTo("/", true);
             return;
         }
-        await GenerateAsync();
+
+        if (!(AuthSession.IsSuperAdmin || AuthSession.IsFarmAdmin))
+        {
+            Navigation.NavigateTo("/dashboard", true);
+            return;
+        }
+
+        _ready = true;
         await InvokeAsync(StateHasChanged);
     }
 
-    private async Task GenerateAsync()
+    private async Task GeneratePlatformAsync()
+    {
+        _loading = true;
+        _platformRows = [];
+        try
+        {
+            var client = CreateApiClient();
+            switch (_platformType)
+            {
+                case "approvals":
+                    await LoadApprovalsAsync(client);
+                    break;
+                case "farms":
+                    await LoadFarmsAsync(client);
+                    break;
+                case "users":
+                    await LoadUsersAsync(client);
+                    break;
+                default:
+                    await LoadAuditAsync(client);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Report could not be spooled: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadAuditAsync(HttpClient client)
+    {
+        _platformHeaders = ["Timestamp", "Event", "Actor", "Role", "Target", "Farm", "Category", "Detail"];
+        var logs = await client.GetFromJsonAsync<List<AuditDto>>($"/api/platform/audit-logs{DateQuery}") ?? [];
+        _platformRows = logs.Select(x => new[]
+        {
+            x.Timestamp.LocalDateTime.ToString("yyyy-MM-dd HH:mm"),
+            x.Event,
+            x.Actor,
+            x.Role,
+            x.Target,
+            x.CompanyName ?? "Platform",
+            x.Category,
+            x.Detail
+        }).ToList();
+    }
+
+    private async Task LoadApprovalsAsync(HttpClient client)
+    {
+        _platformHeaders = ["Farm", "Contact", "Email", "Phone", "Location", "Status", "Submitted", "Reviewed"];
+        var rows = await client.GetFromJsonAsync<List<RegistrationDto>>("/api/marketplace/registrations") ?? [];
+        rows = FilterBySubmitted(rows);
+        _platformRows = rows.Select(x => new[]
+        {
+            x.FarmName,
+            $"{x.ContactFirstName} {x.ContactLastName}".Trim(),
+            x.Email,
+            x.Phone,
+            x.Location ?? "",
+            x.Status,
+            x.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd"),
+            x.ReviewedAt?.LocalDateTime.ToString("yyyy-MM-dd") ?? ""
+        }).ToList();
+    }
+
+    private async Task LoadFarmsAsync(HttpClient client)
+    {
+        _platformHeaders = ["Farm", "Code", "Email", "Phone", "Location", "Status"];
+        var farms = await client.GetFromJsonAsync<List<FarmDto>>("/api/companies") ?? [];
+        _platformRows = farms.Select(x => new[]
+        {
+            x.Name,
+            x.Code,
+            x.Email ?? "",
+            x.Phone ?? "",
+            x.Address ?? "",
+            x.IsActive ? "Active" : "Inactive"
+        }).ToList();
+    }
+
+    private async Task LoadUsersAsync(HttpClient client)
+    {
+        _platformHeaders = ["User", "Username", "Email", "Role", "Farm", "Status", "Created"];
+        var users = await client.GetFromJsonAsync<List<UserDto>>("/api/users") ?? [];
+        users = FilterByCreated(users);
+        _platformRows = users.Select(x => new[]
+        {
+            $"{x.FirstName} {x.LastName}".Trim(),
+            x.Username,
+            x.Email ?? "",
+            x.Role,
+            x.CompanyName ?? "Platform",
+            x.IsActive ? "Active" : "Inactive",
+            x.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd")
+        }).ToList();
+    }
+
+    private List<RegistrationDto> FilterBySubmitted(List<RegistrationDto> rows)
+    {
+        if (_from.HasValue)
+        {
+            var from = new DateTimeOffset(_from.Value.Date);
+            rows = rows.Where(x => x.CreatedAt >= from).ToList();
+        }
+
+        if (_to.HasValue)
+        {
+            var to = new DateTimeOffset(_to.Value.Date.AddDays(1).AddTicks(-1));
+            rows = rows.Where(x => x.CreatedAt <= to).ToList();
+        }
+
+        return rows;
+    }
+
+    private List<UserDto> FilterByCreated(List<UserDto> rows)
+    {
+        if (_from.HasValue)
+        {
+            var from = new DateTimeOffset(_from.Value.Date);
+            rows = rows.Where(x => x.CreatedAt >= from).ToList();
+        }
+
+        if (_to.HasValue)
+        {
+            var to = new DateTimeOffset(_to.Value.Date.AddDays(1).AddTicks(-1));
+            rows = rows.Where(x => x.CreatedAt <= to).ToList();
+        }
+
+        return rows;
+    }
+
+    private async Task GenerateOperationalAsync()
     {
         if (_from is null || _to is null)
         {
@@ -92,7 +309,7 @@
             var from = DateOnly.FromDateTime(_from.Value);
             var to = DateOnly.FromDateTime(_to.Value);
             var response = await CreateApiClient().GetFromJsonAsync<ReportResponse>($"/api/reports?operation={_operation}&from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
-            _rows = ParseRows(response?.Data);
+            _opRows = ParseRows(response?.Data);
         }
         catch (Exception ex)
         {
@@ -103,6 +320,46 @@
             _loading = false;
         }
     }
+
+    private async Task ExportExcelAsync()
+    {
+        var rows = _platformRows.Select(r => (IReadOnlyList<string>)r).ToList();
+        var bytes = ReportExportHelper.ToExcelWorkbook(PlatformReportTitle, _platformHeaders, rows);
+        await DownloadAsync(bytes, $"{SafeFileName(PlatformReportTitle)}.xls", "application/vnd.ms-excel");
+    }
+
+    private async Task ExportPdfAsync()
+    {
+        var rows = _platformRows.Select(r => (IReadOnlyList<string>)r).ToList();
+        var bytes = ReportExportHelper.ToTablePdf(PlatformReportTitle, _platformHeaders, rows);
+        await DownloadAsync(bytes, $"{SafeFileName(PlatformReportTitle)}.pdf", "application/pdf");
+    }
+
+    private async Task ExportOperationalExcelAsync()
+    {
+        var headers = new[] { "Date", "Status / Segment", "Total" };
+        var rows = _opRows.Select(x => (IReadOnlyList<string>)[x.Date.ToString("yyyy-MM-dd"), x.Status, x.Total.ToString("N2")]).ToList();
+        var bytes = ReportExportHelper.ToExcelWorkbook(OperationalReportTitle, headers, rows);
+        await DownloadAsync(bytes, $"{SafeFileName(OperationalReportTitle)}.xls", "application/vnd.ms-excel");
+    }
+
+    private async Task ExportOperationalPdfAsync()
+    {
+        var headers = new[] { "Date", "Status / Segment", "Total" };
+        var rows = _opRows.Select(x => (IReadOnlyList<string>)[x.Date.ToString("yyyy-MM-dd"), x.Status, x.Total.ToString("N2")]).ToList();
+        var bytes = ReportExportHelper.ToTablePdf(OperationalReportTitle, headers, rows);
+        await DownloadAsync(bytes, $"{SafeFileName(OperationalReportTitle)}.pdf", "application/pdf");
+    }
+
+    private async Task DownloadAsync(byte[] bytes, string fileName, string contentType)
+    {
+        var base64 = Convert.ToBase64String(bytes);
+        await JSRuntime.InvokeVoidAsync("poultryFarmUi.downloadBytes", base64, fileName, contentType);
+        Snackbar.Add($"Downloaded {fileName}", Severity.Success);
+    }
+
+    private static string SafeFileName(string name) =>
+        string.Join("_", name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries)).Replace(' ', '_');
 
     private static List<ReportRow> ParseRows(JsonElement? data)
     {
@@ -118,6 +375,25 @@
         return rows;
     }
 
+    private string DateQuery
+    {
+        get
+        {
+            var values = new List<string>();
+            if (_from.HasValue)
+            {
+                values.Add($"from={Uri.EscapeDataString(new DateTimeOffset(_from.Value.Date).ToString("O"))}");
+            }
+
+            if (_to.HasValue)
+            {
+                values.Add($"to={Uri.EscapeDataString(new DateTimeOffset(_to.Value.Date.AddDays(1).AddTicks(-1)).ToString("O"))}");
+            }
+
+            return values.Count == 0 ? string.Empty : "?" + string.Join("&", values);
+        }
+    }
+
     private HttpClient CreateApiClient()
     {
         var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
@@ -127,4 +403,8 @@
 
     private sealed record ReportResponse(string Operation, DateOnly From, DateOnly To, JsonElement Data);
     private sealed record ReportRow(DateOnly Date, string Status, decimal Total);
+    private sealed record AuditDto(DateTimeOffset Timestamp, string Event, string Actor, string Role, string Target, string Detail, string Category, string? CompanyName);
+    private sealed record RegistrationDto(Guid Id, string FarmName, string ContactFirstName, string ContactLastName, string Email, string Phone, string? Location, string? Notes, string? RequestedUsername, string Status, string? ReviewNotes, DateTimeOffset? ReviewedAt, Guid? CompanyId, Guid? FarmAdminUserId, DateTimeOffset CreatedAt);
+    private sealed record FarmDto(Guid Id, string Name, string Code, string? Email, string? Phone, string? Address, bool IsActive);
+    private sealed record UserDto(string Username, string? Email, string? FirstName, string? LastName, string Role, string? CompanyName, bool IsActive, DateTimeOffset CreatedAt);
 }

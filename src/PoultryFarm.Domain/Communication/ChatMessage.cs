@@ -7,6 +7,8 @@ public sealed class ChatMessage : AuditableEntity
     public Guid SenderUserId { get; set; }
     public Guid RecipientUserId { get; set; }
     public Guid? CompanyId { get; set; }
+    public Guid? MarketplaceConversationId { get; set; }
+    public Guid? ListingId { get; set; }
     public Guid? ReplyToMessageId { get; set; }
     public ChatMessage? ReplyToMessage { get; set; }
     public string Body { get; set; } = string.Empty;

@@ -34,15 +34,22 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 builder.Services.AddScoped<IActivityNotifier, SignalRActivityNotifier>();
+builder.Services.AddScoped<JwtTokenIssuer>();
+builder.Services.AddScoped<ControllerAudit>();
 builder.Services.AddHostedService<MedicationReminderService>();
 builder.Services.AddHostedService<ChatMessageEncryptionBackfillService>();
 builder.Services.AddHttpClient<AiProviderClient>(client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(builder.Configuration.GetValue("AI:TimeoutSeconds", 18));
+    client.Timeout = TimeSpan.FromSeconds(builder.Configuration.GetValue("AI:TimeoutSeconds", 60));
 });
 builder.Services.AddScoped<IFarmAssistantAgent, OpenAiFarmAssistantAgent>();
 builder.Services.AddSingleton<IChatMessageProtector, ChatMessageProtector>();
 builder.Services.AddHttpClient<OpenAiService>();
+builder.Services.AddHttpClient<IEmailSender, ResendEmailSender>(client =>
+{
+    client.BaseAddress = new Uri("https://api.resend.com/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
@@ -120,7 +127,7 @@ builder.Services
         };
     });
 builder.Services.AddAuthorization();
-builder.Services.AddHealthChecks().AddSqlServer(connectionString, name: "sql-server");
+builder.Services.AddHealthChecks().AddNpgSql(connectionString, name: "postgres");
 
 var app = builder.Build();
 
@@ -142,6 +149,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("BlazorClient");
+app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 

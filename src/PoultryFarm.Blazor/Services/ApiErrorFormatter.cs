@@ -46,13 +46,27 @@ public static class ApiErrorFormatter
         return raw;
     }
 
+    public static async Task<string> FormatHttpAsync(HttpResponseMessage response, string fallback = "Request failed.")
+    {
+        var raw = await response.Content.ReadAsStringAsync();
+        return Format(raw, fallback);
+    }
+
     public static string FormatException(Exception exception, string fallback = "Request failed.", Uri? apiBaseAddress = null)
     {
-        if (exception is HttpRequestException)
+        if (exception is HttpRequestException httpException)
         {
-            return apiBaseAddress is null
-                ? "The API is not reachable. Start the API server and try again."
-                : $"The API is not reachable at {apiBaseAddress}. Start the API server and try again.";
+            // StatusCode is set when the server responded (4xx/5xx); null means a true transport failure.
+            if (httpException.StatusCode is null)
+            {
+                return apiBaseAddress is null
+                    ? "The API is not reachable. Start the API server and try again."
+                    : $"The API is not reachable at {apiBaseAddress}. Start the API server and try again.";
+            }
+
+            return string.IsNullOrWhiteSpace(httpException.Message)
+                ? $"{fallback} ({(int)httpException.StatusCode})"
+                : httpException.Message;
         }
 
         return string.IsNullOrWhiteSpace(exception.Message) ? fallback : exception.Message;

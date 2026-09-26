@@ -1,0 +1,125 @@
+@page "/farms"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using System.Net.Http.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<section class="section-band farms-page-hero">
+    <div class="section">
+        <p class="eyebrow">Verified sellers</p>
+        <h1>Farms on Akokɔ Papa</h1>
+        <p class="section-intro">
+            Only farms that have been approved, set their password, and signed in appear here.
+        </p>
+    </div>
+</section>
+
+<section class="section-band muted">
+    <div class="section">
+        @if (_loading)
+        {
+            <div class="farm-grid">
+                @for (var i = 0; i < 6; i++)
+                {
+                    <div class="skeleton-card farm-skeleton"></div>
+                }
+            </div>
+        }
+        else if (_farms.Count == 0)
+        {
+            <div class="empty-state">
+                <h3>No active farms yet</h3>
+                <p>Approved farms show up here after they complete password setup and sign in to their dashboard.</p>
+                <a class="btn secondary" href="/apply">Register Your Farm</a>
+            </div>
+        }
+        else
+        {
+            <div class="farm-grid">
+                @foreach (var farm in _farms)
+                {
+                    <article class="farm-card" @onclick="@(() => Navigation.NavigateTo($"/farms/{farm.Id}"))">
+                        <div class="farm-card-banner @FarmBannerTone(farm.Id)" aria-hidden="true">
+                            <span class="farm-card-initials">@Initials(farm.Name)</span>
+                        </div>
+                        <div class="farm-card-body">
+                            <div class="farm-card-title-row">
+                                <h3>@farm.Name</h3>
+                                <span class="verified-badge" title="Verified farm">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                        <path fill="currentColor" d="M12 2.5 14.1 4l2.5-.4 1.1 2.3 2.3 1.1-.4 2.5L22 12l-2.4 1.5.4 2.5-2.3 1.1-1.1 2.3-2.5-.4L12 21.5 9.9 20l-2.5.4-1.1-2.3-2.3-1.1.4-2.5L2 12l2.4-1.5-.4-2.5 2.3-1.1 1.1-2.3 2.5.4L12 2.5Zm-1.2 12.1 4.9-4.9-1.4-1.4-3.5 3.5-1.6-1.6-1.4 1.4 3 3Z" />
+                                    </svg>
+                                    Verified
+                                </span>
+                            </div>
+                            <p class="farm-card-location">@(string.IsNullOrWhiteSpace(farm.Location) ? "Ghana" : farm.Location)</p>
+                            <p class="farm-card-summary">@farm.Summary</p>
+                            <div class="farm-card-tags">
+                                @if (farm.SellsEggs)
+                                {
+                                    <span class="farm-tag">Eggs</span>
+                                }
+                                @if (farm.SellsBirds)
+                                {
+                                    <span class="farm-tag birds">Birds</span>
+                                }
+                                @if (!farm.SellsEggs && !farm.SellsBirds)
+                                {
+                                    <span class="farm-tag muted">Inventory coming soon</span>
+                                }
+                            </div>
+                            <div class="farm-card-footer">
+                                <span>@farm.ActiveListingCount listing@(farm.ActiveListingCount == 1 ? "" : "s")</span>
+                                <span class="farm-card-cta">View details →</span>
+                            </div>
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    private bool _loading = true;
+    private List<FarmCardDto> _farms = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            _farms = await client.GetFromJsonAsync<List<FarmCardDto>>("/api/marketplace/farms") ?? [];
+        }
+        catch
+        {
+            _farms = [];
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0) return "F";
+        if (parts.Length == 1) return parts[0][..Math.Min(2, parts[0].Length)].ToUpperInvariant();
+        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+
+    private static string FarmBannerTone(Guid id)
+        => $"tone-{Math.Abs(id.GetHashCode()) % 6}";
+
+    private sealed record FarmCardDto(
+        Guid Id,
+        string Name,
+        string? Location,
+        string Summary,
+        bool SellsEggs,
+        bool SellsBirds,
+        int ActiveListingCount,
+        string? ContactPhone,
+        DateTimeOffset? JoinedAt);
+}

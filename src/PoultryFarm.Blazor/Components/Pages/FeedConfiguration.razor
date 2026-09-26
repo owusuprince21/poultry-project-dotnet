@@ -1,9 +1,11 @@
 @page "/feed-configuration"
 @using System.Net.Http.Headers
+@using PoultryFarm.Blazor.Services
 
 @inject AuthSession AuthSession
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
 @inject NavigationManager Navigation
 
 <PageTitle>Feed Configuration</PageTitle>
@@ -51,7 +53,11 @@
                     <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" />
                 </MudStack>
 
-                <MudTable Items="_items" Dense="true" Hover="true" Loading="_loading" Elevation="0">
+                <TableExportBar Title="Configured feed types"
+                                FileName="feed-configuration"
+                                Disabled="@(!_items.Any())"
+                                GetPayload="BuildExportPayload" />
+                <MudTable Items="_items" Dense="true" Hover="true" Loading="_loading" Elevation="0" RowsPerPage="10">
                     <HeaderContent>
                         <MudTh>Feed Type</MudTh>
                         <MudTh>Bag Size</MudTh>
@@ -67,7 +73,7 @@
                             </MudChip>
                         </MudTd>
                         <MudTd>
-                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                                 <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => Edit(context))">Update</MudMenuItem>
                                 <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteAsync(context.Id))">Delete</MudMenuItem>
                             </MudMenu>
@@ -76,6 +82,9 @@
                     <NoRecordsContent>
                         <EmptyState Icon="@Icons.Material.Filled.Inventory" Title="No feed types configured" Description="Add feed names and bag sizes before recording stock arrivals." />
                     </NoRecordsContent>
+                    <PagerContent>
+                        <TablePager />
+                    </PagerContent>
                 </MudTable>
             </MudPaper>
         </MudItem>
@@ -155,8 +164,13 @@
         }
     }
 
-    private void Edit(FeedConfigurationOption item)
+    private async Task Edit(FeedConfigurationOption item)
     {
+        if (!await TableActionConfirm.ConfirmAsync("update", item.Name))
+        {
+            return;
+        }
+
         _editingId = item.Id;
         _model.Name = item.Name;
         _model.BagSizeKg = item.BagSizeKg;
@@ -165,6 +179,11 @@
 
     private async Task DeleteAsync(Guid id)
     {
+        if (!await TableActionConfirm.ConfirmAsync("delete this feed type"))
+        {
+            return;
+        }
+
         var response = await CreateApiClient().DeleteAsync($"/api/feed/configurations/{id}");
         if (!response.IsSuccessStatusCode)
         {
@@ -190,6 +209,19 @@
         var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
         return client;
+    }
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Feed Type", "Bag Size", "Status" };
+        var rows = _items.Select(x => (IReadOnlyList<string>)
+        [
+            x.Name,
+            $"{x.BagSizeKg} kg",
+            x.IsActive ? "Active" : "Inactive"
+        ]).ToList();
+
+        return new TableExportPayload("Configured Feed Types", headers, rows, $"Exported {DateTime.Now:g}");
     }
 
     private sealed record FeedOptions(List<FeedTypeOption> FeedTypes, List<FeedConfigurationOption> Configurations);

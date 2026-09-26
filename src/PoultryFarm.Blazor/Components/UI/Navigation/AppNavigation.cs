@@ -1,4 +1,5 @@
 using MudBlazor;
+using PoultryFarm.Domain.Marketplace;
 
 namespace PoultryFarm.Blazor.Components.UI.Navigation;
 
@@ -7,40 +8,48 @@ public static class AppNavigation
     public static IReadOnlyCollection<NavGroup> Groups { get; } =
     [
         new NavGroup(
-            "Dashboard",
+            "Overview",
             [
                 new NavItem(
-                    "Dashboard",
+                    "Dashboard Overview",
                     "/dashboard",
                     Icons.Material.Filled.Dashboard,
-                    NavPermission.AnyAuthenticated)
-            ]),
-
-        new NavGroup(
-            "Platform Administration",
-            [
-                new NavItem(
-                    "Companies",
-                    "/companies",
-                    Icons.Material.Filled.Business,
-                    NavPermission.SystemAdminOnly),
+                    NavPermission.AnyAuthenticated,
+                    WorkerPageKeys.Dashboard),
 
                 new NavItem(
-                    "Tenants",
-                    "/tenants",
-                    Icons.Material.Filled.Apartment,
-                    NavPermission.SystemAdminOnly),
+                    "Farm Approvals",
+                    "/farmer-registrations",
+                    Icons.Material.Filled.HowToReg,
+                    NavPermission.SystemAdminOnly,
+                    ShowPendingFarmerBadge: true),
 
                 new NavItem(
-                    "System Users",
-                    "/system-users",
-                    Icons.Material.Filled.AdminPanelSettings,
+                    "Farms",
+                    "/farms",
+                    Icons.Material.Filled.Agriculture,
                     NavPermission.SystemAdminOnly),
 
                 new NavItem(
                     "Audit Logs",
                     "/audit-logs",
                     Icons.Material.Filled.ManageSearch,
+                    NavPermission.SystemAdminOnly),
+
+                new NavItem(
+                    "Users & Roles",
+                    "/users",
+                    Icons.Material.Filled.Groups,
+                    NavPermission.SystemAdminOnly)
+            ]),
+
+        new NavGroup(
+            "Platform Administration",
+            [
+                new NavItem(
+                    "System Users",
+                    "/system-users",
+                    Icons.Material.Filled.AdminPanelSettings,
                     NavPermission.SystemAdminOnly)
             ]),
 
@@ -51,19 +60,38 @@ public static class AppNavigation
                     "Users & Roles",
                     "/users",
                     Icons.Material.Filled.Groups,
-                    NavPermission.SystemOrFarmAdmin),
+                    NavPermission.SubAdminOrFarmAdmin),
 
                 new NavItem(
                     "Feed Configuration",
                     "/feed-configuration",
                     Icons.Material.Filled.Tune,
-                    NavPermission.FarmAdminOnly),
+                    NavPermission.FarmAdminOnly)
+            ]),
+
+        new NavGroup(
+            "Marketplace",
+            [
+                new NavItem(
+                    "Listings",
+                    "/marketplace/listings",
+                    Icons.Material.Filled.Storefront,
+                    NavPermission.FarmAdminOrWorker,
+                    WorkerPageKeys.Marketplace),
 
                 new NavItem(
-                    "Settings",
-                    "/settings",
-                    Icons.Material.Filled.Settings,
-                    NavPermission.AnyAuthenticated)
+                    "Activities",
+                    "/marketplace/activities",
+                    Icons.Material.Filled.Campaign,
+                    NavPermission.FarmAdminOrWorker,
+                    WorkerPageKeys.Marketplace),
+
+                new NavItem(
+                    "Inquiries",
+                    "/marketplace/inquiries",
+                    Icons.Material.Filled.ContactMail,
+                    NavPermission.FarmAdminOrWorker,
+                    WorkerPageKeys.Marketplace)
             ]),
 
         new NavGroup(
@@ -73,13 +101,15 @@ public static class AppNavigation
                     "Egg Production",
                     "/production",
                     Icons.Material.Filled.Egg,
-                    NavPermission.OperationsAccess),
+                    NavPermission.OperationsAccess,
+                    WorkerPageKeys.Production),
 
                 new NavItem(
                     "Feed Management",
                     "/feed",
                     Icons.Material.Filled.Warehouse,
-                    NavPermission.OperationsAccess),
+                    NavPermission.OperationsAccess,
+                    WorkerPageKeys.Feed),
 
                 new NavItem(
                     "Medication",
@@ -97,7 +127,8 @@ public static class AppNavigation
                     "Bird Health",
                     "/health",
                     Icons.Material.Filled.HealthAndSafety,
-                    NavPermission.OperationsAccess),
+                    NavPermission.OperationsAccess,
+                    WorkerPageKeys.Health),
 
                 new NavItem(
                     "Debeaking",
@@ -109,7 +140,8 @@ public static class AppNavigation
                     "Daily Summary Report",
                     "/daily-summary",
                     Icons.Material.Filled.Summarize,
-                    NavPermission.WorkerOnly)
+                    NavPermission.WorkerOnly,
+                    WorkerPageKeys.DailySummary)
             ]),
 
         new NavGroup(
@@ -119,7 +151,8 @@ public static class AppNavigation
                     "Sales",
                     "/sales",
                     Icons.Material.Filled.PointOfSale,
-                    NavPermission.CommercialAccess)
+                    NavPermission.CommercialAccess,
+                    WorkerPageKeys.Sales)
             ]),
 
         new NavGroup(
@@ -129,7 +162,8 @@ public static class AppNavigation
                     "Farm Assistance",
                     "/farm-assistance",
                     Icons.Material.Filled.SmartToy,
-                    NavPermission.AssistanceAccess)
+                    NavPermission.AssistanceAccess,
+                    WorkerPageKeys.FarmAssistance)
             ]),
 
         new NavGroup(
@@ -140,6 +174,17 @@ public static class AppNavigation
                     "/reports",
                     Icons.Material.Filled.Assessment,
                     NavPermission.ReportsAccess)
+            ]),
+
+        new NavGroup(
+            "Account",
+            [
+                new NavItem(
+                    "User Profile & Settings",
+                    "/settings",
+                    Icons.Material.Filled.ManageAccounts,
+                    NavPermission.AnyAuthenticated,
+                    WorkerPageKeys.Settings)
             ])
     ];
 }

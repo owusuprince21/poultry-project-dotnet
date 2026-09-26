@@ -1,0 +1,447 @@
+@page "/marketplace/listings"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Shared
+@using PoultryFarm.Domain.Marketplace
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
+
+<PageTitle>Marketplace Listings</PageTitle>
+
+@if (!_loaded)
+{
+    <PageLoader Message="Loading listings..." />
+}
+else if (!AuthSession.IsFarmAdmin && !AuthSession.IsSystemAdmin && !AuthSession.CanAccessPage("marketplace"))
+{
+    <ModulePageShell Title="Marketplace Listings" Subtitle="Farm admins publish eggs and birds to the marketplace.">
+        <ModuleStatusPanel Title="Restricted" Description="Farm admins and workers with marketplace access can manage listings." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Marketplace Listings" Subtitle="Push egg inventory or bird batches onto the public marketplace.">
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="4">
+                <MudPaper Class="pa-4 rounded-lg border border-slate-200" Elevation="0">
+                    <MudStack Spacing="2">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                            <MudText Typo="Typo.h6">@(_editingId.HasValue ? "Edit listing" : "New listing")</MudText>
+                            @if (_editingId.HasValue)
+                            {
+                                <MudButton Variant="Variant.Text" Color="Color.Secondary" Size="Size.Small" OnClick="CancelEdit">Cancel</MudButton>
+                            }
+                        </MudStack>
+                        <MudSelect T="string"
+                                   Value="_form.ListingType"
+                                   ValueChanged="OnListingTypeChanged"
+                                   Label="Type"
+                                   Variant="Variant.Outlined">
+                            <MudSelectItem T="string" Value="@("Eggs")">Eggs</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("Birds")">Birds</MudSelectItem>
+                        </MudSelect>
+                        <MudTextField @bind-Value="_form.Title" Label="Title" Variant="Variant.Outlined" />
+                        <MudTextField @bind-Value="_form.Description" Label="Description" Variant="Variant.Outlined" Lines="3" />
+                        <MudNumericField @bind-Value="_form.QuantityOffered"
+                                         Label="@QuantityLabel"
+                                         Variant="Variant.Outlined"
+                                         Min="1"
+                                         Disabled="@(!_form.SpecifyQuantity)" />
+                        <MudSwitch T="bool"
+                                   @bind-Value="_form.SpecifyQuantity"
+                                   Label="State quantity"
+                                   Color="Color.Primary" />
+                        @if (!_form.SpecifyQuantity)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                Buyers will see this listing quantity as unknown.
+                            </MudText>
+                        }
+                        <MudTextField Value="@UnitDisplayLabel"
+                                      Label="Unit"
+                                      Variant="Variant.Outlined"
+                                      ReadOnly="true"
+                                      HelperText="@UnitHelperText" />
+                        <MudNumericField T="decimal?"
+                                         @bind-Value="_form.PriceAmount"
+                                         Label="@PriceLabel"
+                                         Variant="Variant.Outlined"
+                                         Min="0m"
+                                         Step="0.01m"
+                                         HideSpinButtons="true" />
+                        @if (_form.PriceAmount is decimal amount)
+                        {
+                            <MudText Typo="Typo.subtitle2" Color="Color.Primary">
+                                Marketplace price: @GhsMoney.Format(amount) @PricePerSuffix
+                            </MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption">Enter 89 to show GH₵89.00 @PricePerSuffix on the marketplace.</MudText>
+                        }
+                        <MudText Typo="Typo.subtitle2">Card image</MudText>
+                        <InputFile OnChange="OnImageSelected" accept="image/jpeg,image/png,image/webp,image/gif" />
+                        @if (!string.IsNullOrWhiteSpace(_form.ImageUrl))
+                        {
+                            <MudImage Src="@ResolveMediaUrl(_form.ImageUrl)" Alt="Listing preview" Class="rounded-lg" Style="max-height:160px;object-fit:cover;width:100%;" />
+                            <MudButton Variant="Variant.Text" Color="Color.Error" Size="Size.Small" OnClick="ClearImage">Remove image</MudButton>
+                        }
+                        <MudSwitch T="bool" @bind-Value="_form.PublishNow" Label="@PublishSwitchLabel" Color="Color.Success" />
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving || _uploading" OnClick="SaveAsync">
+                            @SaveButtonLabel
+                        </MudButton>
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="8">
+                <MudPaper Class="pa-4 rounded-lg border border-slate-200" Elevation="0">
+                    <TableExportBar Title="Listings"
+                                    FileName="marketplace-listings"
+                                    Disabled="@(!_listings.Any())"
+                                    GetPayload="BuildExportPayload" />
+                    <MudTable Items="_listings" Dense="true" Hover="true" RowsPerPage="10">
+                        <HeaderContent>
+                            <MudTh></MudTh>
+                            <MudTh>Title</MudTh>
+                            <MudTh>Type</MudTh>
+                            <MudTh>Price</MudTh>
+                            <MudTh>Qty</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>
+                                @if (!string.IsNullOrWhiteSpace(context.ImageUrl))
+                                {
+                                    <MudImage Src="@ResolveMediaUrl(context.ImageUrl)" Alt="@context.Title" Style="width:48px;height:48px;object-fit:cover;border-radius:8px;" />
+                                }
+                            </MudTd>
+                            <MudTd>@context.Title</MudTd>
+                            <MudTd>@context.ListingType</MudTd>
+                            <MudTd>@(context.PriceText ?? "Ask for price")</MudTd>
+                            <MudTd>@FormatQuantity(context.QuantityOffered, context.UnitLabel, context.ListingType)</MudTd>
+                            <MudTd>@context.Status</MudTd>
+                            <MudTd>
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Edit" OnClick="@(() => BeginEdit(context))">Edit</MudMenuItem>
+                                    @if (context.Status != "Published")
+                                    {
+                                        <MudMenuItem Icon="@Icons.Material.Filled.Publish" OnClick="@(() => ActionAsync(context, "publish"))">Publish</MudMenuItem>
+                                    }
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Undo" OnClick="@(() => ActionAsync(context, "withdraw"))">Withdraw</MudMenuItem>
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Sell" OnClick="@(() => ActionAsync(context, "sold-out"))">Sold out</MudMenuItem>
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteAsync(context))">Delete</MudMenuItem>
+                                </MudMenu>
+                            </MudTd>
+                        </RowTemplate>
+                        <PagerContent>
+                            <TablePager />
+                        </PagerContent>
+                    </MudTable>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </ModulePageShell>
+}
+
+@code {
+    private const string EggsUnit = "crate";
+    private const string BirdsUnit = "bird";
+
+    private bool _loaded;
+    private bool _saving;
+    private bool _uploading;
+    private Guid? _editingId;
+    private List<ListingRow> _listings = [];
+    private ListingForm _form = CreateDefaultForm();
+    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+
+    private bool IsEggs => string.Equals(_form.ListingType, "Eggs", StringComparison.OrdinalIgnoreCase);
+    private string UnitDisplayLabel => IsEggs ? "Per crate" : "Per bird";
+    private string UnitHelperText => IsEggs
+        ? "Egg listings are priced and measured per crate."
+        : "Bird listings are priced and measured per bird.";
+    private string QuantityLabel => IsEggs ? "Quantity (crates)" : "Quantity (birds)";
+    private string PriceLabel => IsEggs ? "Price per crate (GHS)" : "Price per bird (GHS)";
+    private string PricePerSuffix => IsEggs ? "per crate" : "per bird";
+    private string PublishSwitchLabel => _editingId.HasValue
+        ? (_form.PublishNow ? "Keep / publish live" : "Save without publishing")
+        : "Publish now";
+    private string SaveButtonLabel =>
+        _saving ? "Saving..."
+        : _uploading ? "Uploading image..."
+        : _editingId.HasValue ? "Update listing"
+        : "Create listing";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated) { Navigation.NavigateTo("/", replace: true); return; }
+        if (AuthSession.MustChangePassword) { Navigation.NavigateTo("/force-password-change", replace: true); return; }
+        if (AuthSession.IsFarmAdmin || AuthSession.IsSystemAdmin || AuthSession.CanAccessPage("marketplace")) await LoadAsync();
+        _loaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static ListingForm CreateDefaultForm() => new()
+    {
+        ListingType = "Eggs",
+        UnitLabel = EggsUnit,
+        SpecifyQuantity = true,
+        QuantityOffered = 1,
+        PublishNow = true
+    };
+
+    private Task OnListingTypeChanged(string listingType)
+    {
+        _form.ListingType = listingType;
+        _form.UnitLabel = UnitForListingType(listingType);
+        return Task.CompletedTask;
+    }
+
+    private static string UnitForListingType(string? listingType) =>
+        string.Equals(listingType, "Birds", StringComparison.OrdinalIgnoreCase) ? BirdsUnit : EggsUnit;
+
+    private static string FormatQuantity(decimal? quantity, string unitLabel, string listingType)
+    {
+        if (quantity is not decimal qty || qty <= 0)
+        {
+            return "Unknown";
+        }
+
+        var unit = string.IsNullOrWhiteSpace(unitLabel) ? UnitForListingType(listingType) : unitLabel.Trim();
+        var plural = qty == 1
+            ? unit
+            : unit.EndsWith("s", StringComparison.OrdinalIgnoreCase) ? unit : $"{unit}s";
+        return $"{qty:N0} {plural}";
+    }
+
+    private async Task LoadAsync()
+    {
+        var client = CreateApiClient();
+        _listings = await client.GetFromJsonAsync<List<ListingRow>>("/api/marketplace/farm/listings") ?? [];
+    }
+
+    private void BeginEdit(ListingRow listing)
+    {
+        _editingId = listing.Id;
+        _form = new ListingForm
+        {
+            ListingType = listing.ListingType,
+            Title = listing.Title,
+            Description = listing.Description,
+            QuantityOffered = listing.QuantityOffered,
+            SpecifyQuantity = listing.QuantityOffered is > 0,
+            UnitLabel = UnitForListingType(listing.ListingType),
+            PriceAmount = listing.PriceAmount,
+            ImageUrl = listing.ImageUrl,
+            BatchId = listing.BatchId,
+            BatchVariantId = listing.BatchVariantId,
+            PublishNow = listing.Status == "Published"
+        };
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _form = CreateDefaultForm();
+    }
+
+    private void ClearImage() => _form.ImageUrl = null;
+
+    private async Task OnImageSelected(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file is null) return;
+
+        _uploading = true;
+        try
+        {
+            await using var stream = file.OpenReadStream(5 * 1024 * 1024);
+            using var content = new MultipartFormDataContent();
+            var streamContent = new StreamContent(stream);
+            streamContent.Headers.ContentType = new MediaTypeHeaderValue(file.ContentType);
+            content.Add(streamContent, "file", file.Name);
+            content.Add(new StringContent("listings"), "folder");
+
+            var client = CreateApiClient();
+            var response = await client.PostAsync("/api/marketplace/farm/uploads", content);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            var uploaded = await response.Content.ReadFromJsonAsync<UploadResponse>();
+            _form.ImageUrl = uploaded?.Url;
+            Snackbar.Add("Image uploaded.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        try
+        {
+            _form.UnitLabel = UnitForListingType(_form.ListingType);
+            if (!_form.SpecifyQuantity)
+            {
+                _form.QuantityOffered = null;
+            }
+            else if (_form.QuantityOffered is null or <= 0)
+            {
+                Snackbar.Add("Enter a quantity greater than zero, or turn off “State quantity”.", Severity.Warning);
+                return;
+            }
+            var client = CreateApiClient();
+            HttpResponseMessage response;
+            if (_editingId is Guid editingId)
+            {
+                response = await client.PutAsJsonAsync($"/api/marketplace/farm/listings/{editingId}", _form);
+            }
+            else
+            {
+                response = await client.PostAsJsonAsync("/api/marketplace/farm/listings", _form);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(_editingId.HasValue ? "Listing updated." : "Listing saved.", Severity.Success);
+            CancelEdit();
+            await LoadAsync();
+        }
+        finally { _saving = false; }
+    }
+
+    private async Task ActionAsync(ListingRow listing, string action)
+    {
+        var label = action switch
+        {
+            "publish" => "publish",
+            "withdraw" => "withdraw",
+            "sold-out" => "mark as sold out",
+            _ => action
+        };
+        if (!await TableActionConfirm.ConfirmAsync(label, listing.Title))
+        {
+            return;
+        }
+
+        var client = CreateApiClient();
+        var response = await client.PostAsync($"/api/marketplace/farm/listings/{listing.Id}/{action}", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+            return;
+        }
+
+        if (_editingId == listing.Id)
+        {
+            CancelEdit();
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(ListingRow listing)
+    {
+        if (!await TableActionConfirm.ConfirmAsync("delete", listing.Title))
+        {
+            return;
+        }
+
+        var client = CreateApiClient();
+        var response = await client.DeleteAsync($"/api/marketplace/farm/listings/{listing.Id}");
+        if (!response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+            return;
+        }
+
+        if (_editingId == listing.Id)
+        {
+            CancelEdit();
+        }
+
+        Snackbar.Add("Listing deleted.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private string ResolveMediaUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return url;
+        }
+
+        return $"{ApiBase}/{url.TrimStart('/')}";
+    }
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Title", "Type", "Price", "Quantity", "Unit", "Status" };
+        var rows = _listings.Select(x => (IReadOnlyList<string>)
+        [
+            x.Title,
+            x.ListingType,
+            x.PriceText ?? "Ask for price",
+            x.QuantityOffered is > 0 ? x.QuantityOffered.Value.ToString("N0") : "Unknown",
+            string.IsNullOrWhiteSpace(x.UnitLabel) ? UnitForListingType(x.ListingType) : x.UnitLabel,
+            x.Status
+        ]).ToList();
+
+        return new TableExportPayload("Marketplace Listings", headers, rows, $"Exported {DateTime.Now:g}");
+    }
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private sealed class ListingForm
+    {
+        public string ListingType { get; set; } = "Eggs";
+        public string Title { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public decimal? QuantityOffered { get; set; }
+        public bool SpecifyQuantity { get; set; } = true;
+        public string UnitLabel { get; set; } = EggsUnit;
+        public decimal? PriceAmount { get; set; }
+        public string? ImageUrl { get; set; }
+        public Guid? BatchId { get; set; }
+        public Guid? BatchVariantId { get; set; }
+        public bool PublishNow { get; set; }
+    }
+
+    private sealed record ListingRow(
+        Guid Id, string ListingType, string Title, string? Description, decimal? QuantityOffered,
+        string UnitLabel, decimal? PriceAmount, string? PriceText, string? ImageUrl, string Status, Guid? BatchId, Guid? BatchVariantId,
+        DateTimeOffset? PublishedAt, DateTimeOffset CreatedAt);
+
+    private sealed record UploadResponse(string Url);
+}

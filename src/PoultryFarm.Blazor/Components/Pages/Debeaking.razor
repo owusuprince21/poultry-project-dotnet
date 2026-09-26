@@ -1,9 +1,11 @@
 @page "/debeaking"
 @using System.Net.Http.Headers
+@using PoultryFarm.Blazor.Services
 
 @inject AuthSession AuthSession
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
 @inject NavigationManager Navigation
 
 <PageTitle>Debeaking</PageTitle>
@@ -57,7 +59,11 @@
                     <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" />
                 </MudStack>
 
-                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading">
+                <TableExportBar Title="Debeaking records"
+                                FileName="debeaking"
+                                Disabled="@(!_records.Any())"
+                                GetPayload="BuildExportPayload" />
+                <MudTable Items="_records" Dense="true" Hover="true" Elevation="0" Loading="_loading" RowsPerPage="10">
                     <HeaderContent>
                         <MudTh>Date</MudTh>
                         <MudTh>Batch</MudTh>
@@ -75,7 +81,7 @@
                         <MudTd>
                             @if (context.Status != 1)
                             {
-                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                                     <MudMenuItem Icon="@Icons.Material.Filled.TaskAlt" OnClick="@(() => CompleteAsync(context.Id))">Mark as complete</MudMenuItem>
                                 </MudMenu>
                             }
@@ -180,6 +186,11 @@
 
     private async Task CompleteAsync(Guid id)
     {
+        if (!await TableActionConfirm.ConfirmAsync("mark this debeaking task as complete"))
+        {
+            return;
+        }
+
         var response = await CreateApiClient().PostAsync($"/api/debeaking/{id}/complete", null);
         if (!response.IsSuccessStatusCode)
         {
@@ -206,6 +217,21 @@
     private static string DisplayColor(int value) => value switch { 0 => "White", 1 => "Brown", 2 => "Black", 3 => "Speckled", _ => "Mixed" };
     private static string StatusText(int value) => value switch { 1 => "Completed", 2 => "Overdue", _ => "Scheduled" };
     private static Color StatusColor(int value) => value switch { 1 => Color.Success, 2 => Color.Error, _ => Color.Warning };
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Date", "Batch", "Type", "Age", "Status" };
+        var rows = _records.Select(x => (IReadOnlyList<string>)
+        [
+            x.ScheduledDate.ToString("MMM d, yyyy"),
+            x.BatchNumber,
+            x.DebeakingType,
+            $"{x.BirdAgeWeeks} weeks",
+            StatusText(x.Status)
+        ]).ToList();
+
+        return new TableExportPayload("Debeaking Records", headers, rows, $"Exported {DateTime.Now:g}");
+    }
 
     private sealed record DebeakingMetrics(int Scheduled = 0, int Completed = 0, int Overdue = 0);
     private sealed record PagedDebeakingResponse(List<DebeakingRow> Items, int Total, int Page, int PageSize);

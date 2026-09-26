@@ -3,6 +3,7 @@
     <Project Path="src/PoultryFarm.Api/PoultryFarm.Api.csproj" />
     <Project Path="src/PoultryFarm.Application/PoultryFarm.Application.csproj" />
     <Project Path="src/PoultryFarm.Blazor/PoultryFarm.Blazor.csproj" />
+    <Project Path="src/PoultryFarm.Marketplace/PoultryFarm.Marketplace.csproj" />
     <Project Path="src/PoultryFarm.Domain/PoultryFarm.Domain.csproj" />
     <Project Path="src/PoultryFarm.Infrastructure/PoultryFarm.Infrastructure.csproj" />
   </Folder>

@@ -1,0 +1,172 @@
+@page "/apply"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@layout PoultryFarm.Marketplace.Components.Layout.AuthSplitLayout
+
+@using System.Net.Http.Json
+@using System.Text.Json
+@using Microsoft.JSInterop
+
+@inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
+@inject NavigationManager Navigation
+@inject IJSRuntime Js
+
+<main class="login-page">
+    <section class="login-visual">
+        <div class="login-shade">
+            <img src="/logos/akoko-papa-icon.svg" alt="Akokɔ Papa logo" class="login-logo" />
+            <h1 class="login-title">Register Your Farm</h1>
+            <p class="login-copy">
+                Apply once. A super admin reviews your farm profile. After approval you receive an
+                email with an invitation link to set your password and sign in.
+            </p>
+        </div>
+    </section>
+
+    <section class="login-panel">
+        <div class="login-card">
+            <h2 class="login-card-title">Farm registration</h2>
+            <p class="login-card-subtitle">Tell us about your farm to request marketplace access.</p>
+
+            <form class="login-form" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+                <label class="field">
+                    <span>Farm name</span>
+                    <input @bind="_farmName" autocomplete="organization" required />
+                </label>
+                <div class="field-row">
+                    <label class="field">
+                        <span>First name</span>
+                        <input @bind="_firstName" autocomplete="given-name" required />
+                    </label>
+                    <label class="field">
+                        <span>Last name</span>
+                        <input @bind="_lastName" autocomplete="family-name" required />
+                    </label>
+                </div>
+                <label class="field">
+                    <span>Email</span>
+                    <input @bind="_email" type="email" autocomplete="email" required />
+                </label>
+                <label class="field">
+                    <span>Phone</span>
+                    <input @bind="_phone" autocomplete="tel" required />
+                </label>
+                <label class="field">
+                    <span>Location</span>
+                    <input @bind="_location" autocomplete="address-level2" />
+                </label>
+                <label class="field">
+                    <span>Preferred username</span>
+                    <input @bind="_username" autocomplete="username" />
+                </label>
+                <label class="field">
+                    <span>Notes</span>
+                    <textarea @bind="_notes" rows="3" placeholder="Bird types, capacity, or anything reviewers should know"></textarea>
+                </label>
+
+                <button class="login-button" type="submit" disabled="@_saving">
+                    @(_saving ? "Submitting..." : "Submit application")
+                </button>
+            </form>
+
+            <p class="login-footer-links">
+                <a href="/">Back to marketplace</a>
+                <span>·</span>
+                <a href="@(Configuration["Apps:FarmBlazorBaseUrl"] ?? "http://localhost:5083")">Farm dashboard login</a>
+            </p>
+        </div>
+    </section>
+</main>
+
+@code {
+    private bool _saving;
+    private string _farmName = string.Empty;
+    private string _firstName = string.Empty;
+    private string _lastName = string.Empty;
+    private string _email = string.Empty;
+    private string _phone = string.Empty;
+    private string _location = string.Empty;
+    private string _username = string.Empty;
+    private string _notes = string.Empty;
+
+    private async Task SubmitAsync()
+    {
+        _saving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            var response = await client.PostAsJsonAsync("/api/marketplace/registrations", new
+            {
+                farmName = _farmName,
+                contactFirstName = _firstName,
+                contactLastName = _lastName,
+                email = _email,
+                phone = _phone,
+                location = _location,
+                notes = _notes,
+                requestedUsername = string.IsNullOrWhiteSpace(_username) ? null : _username
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var raw = await response.Content.ReadAsStringAsync();
+                await ShowToastAsync(FormatApiError(raw), "error");
+                return;
+            }
+
+            await ShowToastAsync("Application submitted successfully.", "success", 1800);
+            Navigation.NavigateTo("/apply/submitted", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            await ShowToastAsync(ex.Message, "error");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ShowToastAsync(string message, string tone, int durationMs = 4200)
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("marketplaceUi.showToast", message, tone, durationMs);
+        }
+        catch
+        {
+            // JS unavailable during disconnect / prerender.
+        }
+    }
+
+    private static string FormatApiError(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return "Application could not be submitted.";
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            foreach (var key in new[] { "detail", "email", "farmName", "phone", "title" })
+            {
+                if (root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
+                {
+                    var text = value.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        return text!;
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall through to raw text.
+        }
+
+        return raw.Length > 220 ? $"{raw[..220]}..." : raw;
+    }
+}

@@ -2,13 +2,22 @@
 @using PoultryFarm.Blazor.Services
 
 @inject AuthSession AuthSession
+@inject NavBadgeState NavBadgeState
+@implements IDisposable
 
 @if (IsVisible)
 {
     <MudNavLink Href="@Item.Href"
                 Icon="@Item.Icon"
-                Match="@Match">
-        @Item.Title
+                Match="@Match"
+                Class="@(Item.ShowPendingFarmerBadge ? "nav-link-with-badge" : null)">
+        <span class="nav-link-title-row">
+            <span>@Item.Title</span>
+            @if (Item.ShowPendingFarmerBadge && NavBadgeState.PendingFarmerRegistrations > 0)
+            {
+                <span class="nav-count-badge">@FormatBadge(NavBadgeState.PendingFarmerRegistrations)</span>
+            }
+        </span>
     </MudNavLink>
 }
 
@@ -20,5 +29,25 @@
     public NavLinkMatch Match { get; set; } = NavLinkMatch.Prefix;
 
     private bool IsVisible =>
-        NavAuthorization.IsVisible(AuthSession, Item.Permission);
+        NavAuthorization.IsVisible(AuthSession, Item);
+
+    protected override void OnInitialized()
+    {
+        if (Item.ShowPendingFarmerBadge)
+        {
+            NavBadgeState.Changed += OnBadgeChanged;
+        }
+    }
+
+    private void OnBadgeChanged() => InvokeAsync(StateHasChanged);
+
+    private static string FormatBadge(int count) => count > 99 ? "99+" : count.ToString();
+
+    public void Dispose()
+    {
+        if (Item.ShowPendingFarmerBadge)
+        {
+            NavBadgeState.Changed -= OnBadgeChanged;
+        }
+    }
 }

@@ -24,26 +24,61 @@ public sealed class SignalRActivityNotifier(
         IReadOnlyCollection<UserRole>? recipientRoles = null,
         CancellationToken cancellationToken = default)
     {
-        var query = dbContext.Users
+        var companyName = await dbContext.Companies
+            .AsNoTracking()
+            .Where(x => x.Id == companyId)
+            .Select(x => x.Name)
+            .FirstOrDefaultAsync(cancellationToken) ?? "Unknown farm";
+
+        var resolvedActor = await ResolveActorNameAsync(actorUserId, actorName, cancellationToken);
+        var companyDetail = EnsureActorInDetail(detail, resolvedActor);
+
+        var companyQuery = dbContext.Users
             .Where(x => x.CompanyId == companyId && (!actorUserId.HasValue || x.Id != actorUserId.Value))
             .AsQueryable();
 
         if (recipientRoles is { Count: > 0 })
         {
-            query = query.Where(x => recipientRoles.Contains(x.FarmRole));
+            companyQuery = companyQuery.Where(x => recipientRoles.Contains(x.FarmRole));
         }
 
-        var recipients = await query
+        var companyRecipients = await companyQuery
             .Select(x => x.Id)
             .ToListAsync(cancellationToken);
 
         await PersistAndSendAsync(
-            recipients,
+            companyRecipients,
             companyId,
             title,
-            detail,
+            companyDetail,
             actorUserId,
-            actorName,
+            resolvedActor,
+            kind,
+            targetType,
+            targetId,
+            cancellationToken);
+
+        var adminRecipients = await dbContext.Users
+            .Where(x =>
+                x.IsSystemAdmin &&
+                (!actorUserId.HasValue || x.Id != actorUserId.Value) &&
+                !companyRecipients.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        if (adminRecipients.Count == 0)
+        {
+            return;
+        }
+
+        var adminDetail = AttachFarmName(companyDetail, companyName);
+        await PersistAndSendAsync(
+            adminRecipients,
+            companyId,
+            title,
+            adminDetail,
+            actorUserId,
+            resolvedActor,
             kind,
             targetType,
             targetId,
@@ -60,6 +95,7 @@ public sealed class SignalRActivityNotifier(
         Guid? targetId = null,
         CancellationToken cancellationToken = default)
     {
+        var resolvedActor = await ResolveActorNameAsync(actorUserId, actorName, cancellationToken);
         var recipients = await dbContext.Users
             .Where(x => x.IsSystemAdmin && (!actorUserId.HasValue || x.Id != actorUserId.Value))
             .Select(x => x.Id)
@@ -69,19 +105,82 @@ public sealed class SignalRActivityNotifier(
             recipients,
             null,
             title,
-            detail,
+            EnsureActorInDetail(detail, resolvedActor),
             actorUserId,
-            actorName,
+            resolvedActor,
             kind,
             targetType,
             targetId,
             cancellationToken);
+    }
 
-        foreach (var recipient in recipients)
+    private async Task<string> ResolveActorNameAsync(Guid? actorUserId, string? actorName, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(actorName) &&
+            !IsGenericActorLabel(actorName))
         {
-            await hubContext.Clients.User(recipient.ToString())
-                .SendAsync("activity.received", BuildPayload(Guid.NewGuid(), title, detail, actorName, kind, targetType, targetId), cancellationToken);
+            return actorName.Trim();
         }
+
+        if (actorUserId.HasValue)
+        {
+            var user = await dbContext.Users
+                .AsNoTracking()
+                .Where(x => x.Id == actorUserId.Value)
+                .Select(x => new { x.FirstName, x.LastName, x.UserName })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (user is not null)
+            {
+                var fullName = $"{user.FirstName} {user.LastName}".Trim();
+                if (!string.IsNullOrWhiteSpace(fullName))
+                {
+                    return fullName;
+                }
+
+                if (!string.IsNullOrWhiteSpace(user.UserName))
+                {
+                    return user.UserName!;
+                }
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(actorName) ? "A team member" : actorName.Trim();
+    }
+
+    private static bool IsGenericActorLabel(string actorName)
+    {
+        var value = actorName.Trim();
+        return value.Equals("System", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("Farm operations", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("Batch management", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("System reminder", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EnsureActorInDetail(string detail, string actorName)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return $"{actorName} performed an action.";
+        }
+
+        if (detail.Contains(actorName, StringComparison.OrdinalIgnoreCase))
+        {
+            return detail;
+        }
+
+        return $"{actorName}: {detail}";
+    }
+
+    private static string AttachFarmName(string detail, string companyName)
+    {
+        if (detail.Contains(companyName, StringComparison.OrdinalIgnoreCase)
+            || detail.Contains("(Farm:", StringComparison.OrdinalIgnoreCase))
+        {
+            return detail;
+        }
+
+        return $"{detail} (Farm: {companyName})";
     }
 
     private async Task PersistAndSendAsync(
@@ -107,7 +206,7 @@ public sealed class SignalRActivityNotifier(
             RecipientUserId = recipient,
             CompanyId = companyId,
             ActorUserId = actorUserId,
-            ActorName = actorName ?? "System",
+            ActorName = actorName ?? "A team member",
             Title = title,
             Detail = detail,
             Kind = kind,
@@ -131,7 +230,7 @@ public sealed class SignalRActivityNotifier(
         id,
         title,
         detail,
-        actorName = actorName ?? "System",
+        actorName = actorName ?? "A team member",
         kind,
         targetType,
         targetId,

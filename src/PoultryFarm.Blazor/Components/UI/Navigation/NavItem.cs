@@ -4,4 +4,6 @@ public sealed record NavItem(
     string Title,
     string Href,
     string Icon,
-    NavPermission Permission);
+    NavPermission Permission,
+    string? PageKey = null,
+    bool ShowPendingFarmerBadge = false);

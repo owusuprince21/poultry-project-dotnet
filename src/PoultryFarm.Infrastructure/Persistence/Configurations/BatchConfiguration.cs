@@ -17,6 +17,5 @@ public sealed class BatchConfiguration : IEntityTypeConfiguration<Batch>
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
         builder.HasIndex(x => new { x.CompanyId, x.BatchNumber }).IsUnique();
         builder.HasMany(x => x.Variants).WithOne(x => x.Batch).HasForeignKey(x => x.BatchId);
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }

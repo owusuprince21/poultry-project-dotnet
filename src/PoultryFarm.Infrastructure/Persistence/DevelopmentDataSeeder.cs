@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using PoultryFarm.Domain.Common;
 using PoultryFarm.Domain.Companies;
+using PoultryFarm.Domain.Identity;
+using PoultryFarm.Domain.Marketplace;
 using PoultryFarm.Infrastructure.Identity;
 
 namespace PoultryFarm.Infrastructure.Persistence;
@@ -79,6 +81,75 @@ public static class DevelopmentDataSeeder
             isSystemAdmin: false,
             mustChangePassword: true,
             roleName: "Worker");
+
+        var worker = await userManager.FindByNameAsync("worker");
+        if (worker is not null &&
+            !await dbContext.WorkerPagePermissions.AnyAsync(x => x.UserId == worker.Id))
+        {
+            foreach (var key in new[]
+                     {
+                         WorkerPageKeys.Dashboard,
+                         WorkerPageKeys.Production,
+                         WorkerPageKeys.Feed,
+                         WorkerPageKeys.Health,
+                         WorkerPageKeys.Sales,
+                         WorkerPageKeys.DailySummary,
+                         WorkerPageKeys.FarmAssistance,
+                         WorkerPageKeys.Settings
+                     })
+            {
+                dbContext.WorkerPagePermissions.Add(new WorkerPagePermission
+                {
+                    UserId = worker.Id,
+                    PageKey = key
+                });
+            }
+
+            await dbContext.SaveChangesAsync();
+        }
+
+        if (!await dbContext.FarmerRegistrations.AnyAsync())
+        {
+            dbContext.FarmerRegistrations.Add(new FarmerRegistration
+            {
+                FarmName = "Sunrise Layers",
+                ContactFirstName = "Ama",
+                ContactLastName = "Mensah",
+                Email = "ama@sunrise-layers.local",
+                Phone = "+233111111111",
+                Location = "Kumasi, Ghana",
+                Notes = "Interested in listing eggs online.",
+                RequestedUsername = "sunriseadmin",
+                Status = FarmerRegistrationStatus.Pending
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        if (!await dbContext.MarketplaceListings.AnyAsync(x => x.CompanyId == company.Id))
+        {
+            dbContext.MarketplaceListings.Add(new MarketplaceListing
+            {
+                CompanyId = company.Id,
+                ListingType = MarketplaceListingType.Eggs,
+                Title = "Fresh brown eggs — farm gate",
+                Description = "Sorted medium/large eggs from Demo Poultry Farm.",
+                QuantityOffered = 30,
+                UnitLabel = "crates",
+                PriceAmount = 45m,
+                PriceText = GhsMoney.Format(45m),
+                Status = MarketplaceListingStatus.Published,
+                PublishedAt = DateTimeOffset.UtcNow
+            });
+            dbContext.FarmActivityPosts.Add(new FarmActivityPost
+            {
+                CompanyId = company.Id,
+                Title = "Week 12 production update",
+                Body = "Layers are performing well with steady daily collections. Share what is working on your farm this week.",
+                IsPublished = true,
+                PublishedAt = DateTimeOffset.UtcNow
+            });
+            await dbContext.SaveChangesAsync();
+        }
     }
 
     private static async Task EnsureUserAsync(

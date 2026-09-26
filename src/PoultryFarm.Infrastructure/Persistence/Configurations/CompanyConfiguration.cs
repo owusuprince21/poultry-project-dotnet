@@ -15,6 +15,5 @@ public sealed class CompanyConfiguration : IEntityTypeConfiguration<Company>
         builder.Property(x => x.Email).HasMaxLength(255);
         builder.Property(x => x.Phone).HasMaxLength(30);
         builder.HasIndex(x => x.Code).IsUnique();
-        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }

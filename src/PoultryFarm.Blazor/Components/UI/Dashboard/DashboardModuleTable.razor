@@ -1,11 +1,12 @@
 @using MudBlazor
+@using PoultryFarm.Blazor.Components.UI.Shared
 
 <MudPaper Class="work-surface" Elevation="0">
     <MudText Typo="Typo.h6" Class="font-semibold">
         @Title
     </MudText>
 
-    <MudTable Items="@Items" Dense="true" Hover="true">
+    <MudTable Items="@Items" Dense="true" Hover="true" RowsPerPage="10">
         <HeaderContent>
             <MudTh>Module</MudTh>
             <MudTh>Status</MudTh>
@@ -29,6 +30,9 @@
                 @context.Priority
             </MudTd>
         </RowTemplate>
+        <PagerContent>
+            <TablePager />
+        </PagerContent>
     </MudTable>
 </MudPaper>
 

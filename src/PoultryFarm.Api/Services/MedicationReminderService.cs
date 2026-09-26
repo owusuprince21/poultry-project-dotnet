@@ -48,6 +48,7 @@ public sealed class MedicationReminderService(
                 schedule.CompanyId,
                 "Medication due tomorrow",
                 $"{schedule.MedicationName} ({schedule.MedicationType}) is due tomorrow for batch {schedule.Batch?.BatchNumber ?? "selected batch"}. Dosage: {schedule.Dosage}. Purpose: {schedule.Purpose}.",
+                actorName: "System reminder",
                 kind: "medication",
                 targetType: "medication",
                 targetId: schedule.Id,

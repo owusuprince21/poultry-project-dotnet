@@ -1,0 +1,870 @@
+@using System.Globalization
+@using System.Net.Http.Json
+@using PoultryFarm.Marketplace.Services
+@rendermode InteractiveServer
+
+@page "/activities"
+
+@inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
+@inject GuestSession GuestSession
+@inject IJSRuntime Js
+
+<section class="social-feed-page">
+    <div class="social-feed-shell">
+        <header class="social-feed-intro">
+            <div>
+                <p class="social-kicker">Akokɔ Papa</p>
+                <h1>Farm Blog</h1>
+            </div>
+            <a class="social-back" href="/">← Catalog</a>
+        </header>
+
+        @if (_loading)
+        {
+            <div class="social-state">Loading posts…</div>
+        }
+        else if (_posts.Count == 0)
+        {
+            <div class="social-state">No posts yet. Check back when farms publish updates.</div>
+        }
+        else
+        {
+            <div class="social-feed">
+                @foreach (var post in _posts)
+                {
+                    var previewComments = post.Comments.Take(2).ToList();
+                    var hasMoreComments = post.Comments.Count > 2 || post.CommentCount > 2;
+                    <article class="social-card @(FocusPostId == post.Id ? "is-focus" : null)" id="@($"post-{post.Id}")" @key="post.Id">
+                        <header class="social-card-head">
+                            <div class="social-avatar" aria-hidden="true">@Initials(post.FarmName)</div>
+                            <div class="social-card-meta">
+                                <strong>@post.FarmName</strong>
+                                <span>@(post.PublishedAt?.ToLocalTime().ToString("d MMM yyyy · h:mm tt") ?? "Just now")</span>
+                            </div>
+                        </header>
+
+                        <div class="social-card-copy">
+                            @if (!string.IsNullOrWhiteSpace(post.Title) && !string.Equals(post.Title, post.Body, StringComparison.Ordinal))
+                            {
+                                <h2>@post.Title</h2>
+                            }
+                            <p>@post.Body</p>
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(post.MediaUrl))
+                        {
+                            <div class="social-card-media">
+                                <img src="@ResolveMediaUrl(post.MediaUrl)" alt="@post.Title" loading="lazy" />
+                            </div>
+                        }
+
+                        <div class="social-card-counts">
+                            <button type="button" class="social-count-btn" @onclick="() => OpenCommentsDialog(post.Id)">
+                                <span>@FormatCount(post.LikeCount) @(post.LikeCount == 1 ? "like" : "likes")</span>
+                            </button>
+                            <button type="button" class="social-count-btn" @onclick="() => OpenCommentsDialog(post.Id)">
+                                <span>@FormatCount(post.CommentCount) @(post.CommentCount == 1 ? "comment" : "comments")</span>
+                            </button>
+                            <span>@FormatCount(post.ShareCount) @(post.ShareCount == 1 ? "share" : "shares")</span>
+                        </div>
+
+                        <div class="social-card-actions">
+                            <button type="button"
+                                    class="social-action @(post.LikedByMe ? "is-active" : null)"
+                                    disabled="@(_likingId == post.Id)"
+                                    @onclick="() => LikeAsync(post)">
+                                @(post.LikedByMe ? "Liked" : "Like")
+                            </button>
+                            <button type="button" class="social-action" @onclick="() => OpenCommentsDialog(post.Id)">
+                                Comment
+                            </button>
+                            <button type="button"
+                                    class="social-action"
+                                    disabled="@(_sharingId == post.Id)"
+                                    @onclick="() => ShareAsync(post)">
+                                Share
+                            </button>
+                        </div>
+
+                        @if (_shareFlashId == post.Id)
+                        {
+                            <p class="social-flash">Link copied — paste it anywhere to share this post.</p>
+                        }
+
+                        <div class="social-comments social-comments-preview">
+                            @if (previewComments.Count == 0)
+                            {
+                                <p class="social-comments-empty">Be the first to comment.</p>
+                            }
+                            else
+                            {
+                                @foreach (var comment in previewComments)
+                                {
+                                    @RenderComment(post, comment, isReply: false, compact: true)
+                                }
+                            }
+
+                            @if (hasMoreComments)
+                            {
+                                <button type="button" class="social-see-more" @onclick="() => OpenCommentsDialog(post.Id)">
+                                    See more comments
+                                </button>
+                            }
+
+                            <form class="social-composer social-composer-compact" @onsubmit="() => CommentAsync(post.Id, null)" @onsubmit:preventDefault>
+                                <div class="social-composer-fields">
+                                    <input type="text"
+                                           maxlength="80"
+                                           placeholder="Your name"
+                                           autocomplete="nickname"
+                                           value="@GetAuthor(post.Id)"
+                                           @oninput="e => SetAuthor(post.Id, e.Value?.ToString())"
+                                           required />
+                                    <textarea rows="2"
+                                              maxlength="2000"
+                                              placeholder="Write a comment…"
+                                              value="@GetDraft(post.Id)"
+                                              @oninput="e => SetDraft(post.Id, e.Value?.ToString())"
+                                              required></textarea>
+                                </div>
+                                <div class="social-composer-foot">
+                                    @if (_commentErrors.TryGetValue(post.Id, out var error) && !string.IsNullOrWhiteSpace(error))
+                                    {
+                                        <p class="social-error">@error</p>
+                                    }
+                                    else
+                                    {
+                                        <span></span>
+                                    }
+                                    <button class="btn primary" type="submit" disabled="@(_commentingKey == post.Id.ToString())">
+                                        @(_commentingKey == post.Id.ToString() ? "Posting…" : "Post")
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+@if (_dialogPost is { } dialogPost)
+{
+    <div class="social-dialog-backdrop" @onclick="CloseCommentsDialog">
+        <div class="social-dialog" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Comments">
+            <header class="social-dialog-head">
+                <div>
+                    <strong>@dialogPost.FarmName</strong>
+                    <span>Comments · @FormatCount(dialogPost.CommentCount)</span>
+                </div>
+                <button type="button" class="social-dialog-close" @onclick="CloseCommentsDialog" aria-label="Close">×</button>
+            </header>
+
+            <div class="social-dialog-body">
+                @if (dialogPost.Comments.Count == 0)
+                {
+                    <p class="social-comments-empty">No comments yet — start the conversation.</p>
+                }
+                else
+                {
+                    @foreach (var comment in dialogPost.Comments)
+                    {
+                        @RenderComment(dialogPost, comment, isReply: false, compact: true)
+                    }
+                }
+            </div>
+
+            <footer class="social-dialog-foot">
+                <form class="social-composer" @onsubmit="() => CommentAsync(dialogPost.Id, null)" @onsubmit:preventDefault>
+                    <p class="social-composer-label">Comment as a guest — enter your name and message.</p>
+                    <div class="social-composer-fields">
+                        <input type="text"
+                               maxlength="80"
+                               placeholder="Your name"
+                               value="@GetAuthor(dialogPost.Id)"
+                               @oninput="e => SetAuthor(dialogPost.Id, e.Value?.ToString())"
+                               required />
+                        <textarea rows="2"
+                                  maxlength="2000"
+                                  placeholder="Write a comment…"
+                                  value="@GetDraft(dialogPost.Id)"
+                                  @oninput="e => SetDraft(dialogPost.Id, e.Value?.ToString())"
+                                  required></textarea>
+                    </div>
+                    <div class="social-composer-foot">
+                        @if (_commentErrors.TryGetValue(dialogPost.Id, out var dialogError) && !string.IsNullOrWhiteSpace(dialogError))
+                        {
+                            <p class="social-error">@dialogError</p>
+                        }
+                        else
+                        {
+                            <span></span>
+                        }
+                        <button class="btn primary" type="submit" disabled="@(_commentingKey == dialogPost.Id.ToString())">
+                            @(_commentingKey == dialogPost.Id.ToString() ? "Posting…" : "Post comment")
+                        </button>
+                    </div>
+                </form>
+            </footer>
+        </div>
+    </div>
+}
+
+@if (_repliesDialog is { } repliesDialog)
+{
+    var (repliesPost, repliesParent) = repliesDialog;
+    <div class="social-dialog-backdrop" @onclick="CloseRepliesDialog">
+        <div class="social-dialog" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Replies">
+            <header class="social-dialog-head">
+                <div>
+                    <strong>Replies</strong>
+                    <span>@FormatCount(repliesParent.Replies.Count) @(repliesParent.Replies.Count == 1 ? "reply" : "replies") to @repliesParent.AuthorName</span>
+                </div>
+                <button type="button" class="social-dialog-close" @onclick="CloseRepliesDialog" aria-label="Close">×</button>
+            </header>
+
+            <div class="social-dialog-body">
+                <div class="social-dialog-parent">
+                    @RenderComment(repliesPost, repliesParent with { Replies = [] }, isReply: false, compact: false, showReplies: false)
+                </div>
+                <div class="social-dialog-replies">
+                    @if (repliesParent.Replies.Count == 0)
+                    {
+                        <p class="social-comments-empty">No replies yet.</p>
+                    }
+                    else
+                    {
+                        @foreach (var reply in repliesParent.Replies)
+                        {
+                            @RenderComment(repliesPost, reply, isReply: true, compact: false, showReplies: false, threadRootId: repliesParent.Id)
+                        }
+                    }
+                </div>
+            </div>
+
+            <footer class="social-dialog-foot">
+                <form class="social-composer" @onsubmit="() => CommentAsync(repliesPost.Id, repliesParent.Id)" @onsubmit:preventDefault>
+                    <p class="social-composer-label">Reply as a guest — enter your name and message.</p>
+                    <div class="social-composer-fields">
+                        <input type="text"
+                               maxlength="80"
+                               placeholder="Your name"
+                               value="@GetAuthor(repliesPost.Id)"
+                               @oninput="e => SetAuthor(repliesPost.Id, e.Value?.ToString())"
+                               required />
+                        <textarea rows="2"
+                                  maxlength="2000"
+                                  placeholder="@($"Reply to {repliesParent.AuthorName}…")"
+                                  value="@GetReplyDraft(repliesParent.Id)"
+                                  @oninput="e => SetReplyDraft(repliesParent.Id, e.Value?.ToString())"
+                                  required></textarea>
+                    </div>
+                    <div class="social-composer-foot">
+                        @if (_replyErrors.TryGetValue(repliesParent.Id, out var repliesError) && !string.IsNullOrWhiteSpace(repliesError))
+                        {
+                            <p class="social-error">@repliesError</p>
+                        }
+                        else
+                        {
+                            <span></span>
+                        }
+                        <button class="btn primary" type="submit" disabled="@(_commentingKey == repliesParent.Id.ToString())">
+                            @(_commentingKey == repliesParent.Id.ToString() ? "Posting…" : "Post reply")
+                        </button>
+                    </div>
+                </form>
+            </footer>
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "post")]
+    public Guid? FocusPostId { get; set; }
+
+    private static readonly string[] ReactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
+
+    private bool _loading = true;
+    private string? _commentingKey;
+    private Guid? _likingId;
+    private Guid? _sharingId;
+    private Guid? _shareFlashId;
+    private Guid? _replyingTo;
+    private Guid? _reactingCommentId;
+    private Guid? _deletingCommentId;
+    private Guid? _commentsDialogPostId;
+    private Guid? _repliesDialogPostId;
+    private Guid? _repliesDialogParentId;
+    private Guid? _reactionHoverId;
+    private Guid? _pinnedReactionCommentId;
+    private List<ActivityDto> _posts = [];
+    private Dictionary<Guid, string> _drafts = new();
+    private Dictionary<Guid, string> _replyDrafts = new();
+    private Dictionary<Guid, string> _authorNames = new();
+    private Dictionary<Guid, string> _commentErrors = new();
+    private Dictionary<Guid, string> _replyErrors = new();
+    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+
+    private const int MaxPreviewReplies = 2;
+
+    private ActivityDto? _dialogPost =>
+        _commentsDialogPostId is Guid id ? _posts.FirstOrDefault(x => x.Id == id) : null;
+
+    private (ActivityDto Post, CommentDto Parent)? _repliesDialog
+    {
+        get
+        {
+            if (_repliesDialogPostId is not Guid postId || _repliesDialogParentId is not Guid parentId)
+            {
+                return null;
+            }
+
+            var post = _posts.FirstOrDefault(x => x.Id == postId);
+            var parent = post?.Comments.FirstOrDefault(x => x.Id == parentId);
+            return post is null || parent is null ? null : (post, parent);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await GuestSession.LoadAsync();
+        await LoadAsync();
+        if (FocusPostId is Guid focusId)
+        {
+            OpenCommentsDialog(focusId);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || FocusPostId is null) return;
+        try
+        {
+            await Js.InvokeVoidAsync("eval", $"document.getElementById('post-{FocusPostId}')?.scrollIntoView({{behavior:'smooth',block:'start'}})");
+        }
+        catch
+        {
+            // Ignore if JS unavailable.
+        }
+    }
+
+    private RenderFragment RenderComment(
+        ActivityDto post,
+        CommentDto comment,
+        bool isReply,
+        bool compact,
+        bool showReplies = true,
+        Guid? threadRootId = null) => __builder =>
+    {
+        var replyParentId = threadRootId ?? comment.Id;
+        var previewReplies = showReplies && !isReply
+            ? comment.Replies.Take(MaxPreviewReplies).ToList()
+            : [];
+        var hasMoreReplies = showReplies && !isReply && comment.Replies.Count > MaxPreviewReplies;
+        var showPicker = _reactionHoverId == comment.Id || _pinnedReactionCommentId == comment.Id;
+        <div class="@(isReply ? "social-comment is-reply" : "social-comment")" @key="comment.Id">
+            <div class="social-avatar sm" aria-hidden="true">@Initials(comment.AuthorName)</div>
+            <div class="social-comment-main">
+                <div class="social-comment-interact"
+                     @onmouseenter="() => SetReactionHover(comment.Id)"
+                     @onmouseleave="() => ClearReactionHover(comment.Id)">
+                    <div class="social-comment-bubble">
+                        <strong>@comment.AuthorName</strong>
+                        <p>@comment.Body</p>
+                        <time>@comment.CreatedAt.ToLocalTime().ToString("g")</time>
+                    </div>
+
+                    <div class="social-comment-toolbar">
+                        @if (comment.Reactions.Count > 0)
+                        {
+                            <div class="social-reaction-chips">
+                                @foreach (var reaction in comment.Reactions)
+                                {
+                                    <button type="button"
+                                            class="social-reaction-chip @(reaction.ReactedByMe ? "is-mine" : null)"
+                                            disabled="@(_reactingCommentId == comment.Id)"
+                                            @onclick="() => ReactAsync(post.Id, comment.Id, reaction.Emoji)"
+                                            @onclick:stopPropagation="true">
+                                        <span>@reaction.Emoji</span>
+                                        <span>@FormatCount(reaction.Count)</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+                        <div class="social-comment-tools">
+                            <div class="social-reaction-picker @(showPicker ? "is-visible" : null)" title="React">
+                                @foreach (var emoji in ReactionEmojis)
+                                {
+                                    var picked = emoji;
+                                    <button type="button"
+                                            class="social-reaction-add"
+                                            disabled="@(_reactingCommentId == comment.Id)"
+                                            @onmousedown:preventDefault="true"
+                                            @onclick="() => ReactAsync(post.Id, comment.Id, picked)"
+                                            @onclick:stopPropagation="true">@picked</button>
+                                }
+                            </div>
+                            <button type="button"
+                                    class="social-reply-btn"
+                                    @onclick="() => PinReactionPicker(comment.Id)"
+                                    @onclick:stopPropagation="true">
+                                React
+                            </button>
+                            <button type="button" class="social-reply-btn" @onclick="() => ToggleReply(comment.Id, comment.AuthorName)">
+                                @(_replyingTo == comment.Id ? "Cancel" : "Reply")
+                            </button>
+                            @if (comment.CanDelete)
+                            {
+                                <button type="button"
+                                        class="social-reply-btn is-danger"
+                                        disabled="@(_deletingCommentId == comment.Id)"
+                                        @onclick="() => DeleteCommentAsync(post.Id, comment.Id)">
+                                    @(_deletingCommentId == comment.Id ? "Deleting…" : "Delete")
+                                </button>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                @if (showReplies && !isReply && previewReplies.Count > 0)
+                {
+                    <div class="social-replies">
+                        @foreach (var reply in previewReplies)
+                        {
+                            @RenderComment(post, reply, isReply: true, compact: compact, showReplies: false, threadRootId: comment.Id)
+                        }
+                        @if (hasMoreReplies)
+                        {
+                            <button type="button" class="social-see-more is-inline" @onclick="() => OpenRepliesDialog(post.Id, comment.Id)">
+                                See more replies
+                            </button>
+                        }
+                    </div>
+                }
+
+                @if (_replyingTo == comment.Id)
+                {
+                    <form class="social-composer social-composer-reply" @onsubmit="() => CommentAsync(post.Id, replyParentId, comment.Id)" @onsubmit:preventDefault>
+                        <div class="social-composer-fields">
+                            <input type="text"
+                                   maxlength="80"
+                                   placeholder="Your name"
+                                   value="@GetAuthor(post.Id)"
+                                   @oninput="e => SetAuthor(post.Id, e.Value?.ToString())"
+                                   required />
+                            <textarea rows="2"
+                                      maxlength="2000"
+                                      placeholder="@($"Reply to {comment.AuthorName}…")"
+                                      value="@GetReplyDraft(comment.Id)"
+                                      @oninput="e => SetReplyDraft(comment.Id, e.Value?.ToString())"
+                                      required></textarea>
+                        </div>
+                        <div class="social-composer-foot">
+                            @if (_replyErrors.TryGetValue(comment.Id, out var replyError) && !string.IsNullOrWhiteSpace(replyError))
+                            {
+                                <p class="social-error">@replyError</p>
+                            }
+                            else
+                            {
+                                <span></span>
+                            }
+                            <button class="btn primary" type="submit" disabled="@(_commentingKey == comment.Id.ToString())">
+                                @(_commentingKey == comment.Id.ToString() ? "Posting…" : "Post reply")
+                            </button>
+                        </div>
+                    </form>
+                }
+            </div>
+        </div>
+    };
+
+    private async Task LoadAsync()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        try
+        {
+            var reactor = Uri.EscapeDataString(GuestSession.ReactorKey ?? string.Empty);
+            _posts = await client.GetFromJsonAsync<List<ActivityDto>>($"/api/marketplace/activities?reactorKey={reactor}") ?? [];
+            foreach (var post in _posts)
+            {
+                _drafts.TryAdd(post.Id, string.Empty);
+                if (!_authorNames.ContainsKey(post.Id))
+                {
+                    _authorNames[post.Id] = GuestSession.DisplayName ?? string.Empty;
+                }
+            }
+        }
+        catch
+        {
+            _posts = [];
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OpenCommentsDialog(Guid postId)
+    {
+        _commentsDialogPostId = postId;
+        _repliesDialogPostId = null;
+        _repliesDialogParentId = null;
+        _replyingTo = null;
+    }
+
+    private void CloseCommentsDialog()
+    {
+        _commentsDialogPostId = null;
+        _replyingTo = null;
+    }
+
+    private void OpenRepliesDialog(Guid postId, Guid parentCommentId)
+    {
+        _repliesDialogPostId = postId;
+        _repliesDialogParentId = parentCommentId;
+        _replyingTo = null;
+        _replyDrafts.TryAdd(parentCommentId, string.Empty);
+    }
+
+    private void CloseRepliesDialog()
+    {
+        _repliesDialogPostId = null;
+        _repliesDialogParentId = null;
+        _replyingTo = null;
+    }
+
+    private void SetReactionHover(Guid commentId)
+    {
+        _reactionHoverId = commentId;
+    }
+
+    private void ClearReactionHover(Guid commentId)
+    {
+        if (_reactionHoverId == commentId && _pinnedReactionCommentId != commentId)
+        {
+            _reactionHoverId = null;
+        }
+    }
+
+    private void PinReactionPicker(Guid commentId)
+    {
+        _pinnedReactionCommentId = _pinnedReactionCommentId == commentId ? null : commentId;
+        _reactionHoverId = commentId;
+    }
+
+    private void ToggleReply(Guid commentId, string? authorName = null)
+    {
+        _replyingTo = _replyingTo == commentId ? null : commentId;
+        _replyDrafts.TryAdd(commentId, string.Empty);
+    }
+
+    private string GetDraft(Guid id) => _drafts.TryGetValue(id, out var value) ? value : string.Empty;
+    private void SetDraft(Guid id, string? value) => _drafts[id] = value ?? string.Empty;
+    private string GetReplyDraft(Guid id) => _replyDrafts.TryGetValue(id, out var value) ? value : string.Empty;
+    private void SetReplyDraft(Guid id, string? value) => _replyDrafts[id] = value ?? string.Empty;
+    private string GetAuthor(Guid id) => _authorNames.TryGetValue(id, out var value) ? value : string.Empty;
+    private void SetAuthor(Guid id, string? value) => _authorNames[id] = value ?? string.Empty;
+
+    private static string FormatCount(int count)
+    {
+        if (count < 1000)
+        {
+            return count.ToString(CultureInfo.InvariantCulture);
+        }
+
+        var thousands = count / 1000d;
+        return thousands % 1 == 0
+            ? $"{(int)thousands}K"
+            : string.Create(CultureInfo.InvariantCulture, $"{thousands:0.#}K");
+    }
+
+    private static string Initials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 1) return parts[0][..Math.Min(2, parts[0].Length)].ToUpperInvariant();
+        return $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant();
+    }
+
+    private async Task LikeAsync(ActivityDto post)
+    {
+        _likingId = post.Id;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            var response = await client.PostAsJsonAsync($"/api/marketplace/activities/{post.Id}/likes", new
+            {
+                reactorKey = GuestSession.ReactorKey
+            });
+            if (!response.IsSuccessStatusCode) return;
+
+            var result = await response.Content.ReadFromJsonAsync<LikeResponse>();
+            if (result is null) return;
+
+            var index = _posts.FindIndex(x => x.Id == post.Id);
+            if (index >= 0)
+            {
+                _posts[index] = _posts[index] with { LikeCount = result.LikeCount, LikedByMe = result.LikedByMe };
+            }
+        }
+        finally
+        {
+            _likingId = null;
+        }
+    }
+
+    private async Task ShareAsync(ActivityDto post)
+    {
+        _sharingId = post.Id;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            var response = await client.PostAsync($"/api/marketplace/activities/{post.Id}/share", null);
+            if (!response.IsSuccessStatusCode) return;
+
+            var result = await response.Content.ReadFromJsonAsync<ShareResponse>();
+            if (result is null) return;
+
+            try
+            {
+                await Js.InvokeVoidAsync("navigator.clipboard.writeText", result.ShareUrl);
+            }
+            catch
+            {
+                // Still count the share if clipboard is blocked.
+            }
+
+            var index = _posts.FindIndex(x => x.Id == post.Id);
+            if (index >= 0)
+            {
+                _posts[index] = _posts[index] with { ShareCount = result.ShareCount };
+            }
+
+            _shareFlashId = post.Id;
+            _ = ClearShareFlashAsync(post.Id);
+        }
+        finally
+        {
+            _sharingId = null;
+        }
+    }
+
+    private async Task ClearShareFlashAsync(Guid postId)
+    {
+        await Task.Delay(3200);
+        if (_shareFlashId == postId)
+        {
+            _shareFlashId = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task CommentAsync(Guid postId, Guid? parentCommentId, Guid? draftKey = null)
+    {
+        var authorName = GetAuthor(postId).Trim();
+        var errorKey = draftKey ?? parentCommentId;
+        var body = errorKey is Guid keyed
+            ? GetReplyDraft(keyed).Trim()
+            : GetDraft(postId).Trim();
+
+        if (errorKey is Guid replyErrorKey)
+        {
+            _replyErrors[replyErrorKey] = string.Empty;
+        }
+        else
+        {
+            _commentErrors[postId] = string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(authorName))
+        {
+            SetError(postId, errorKey, "Enter your name to comment.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            SetError(postId, errorKey, "Write a comment before posting.");
+            return;
+        }
+
+        _commentingKey = (errorKey ?? postId).ToString();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            var response = await client.PostAsJsonAsync($"/api/marketplace/activities/{postId}/comments", new
+            {
+                authorName,
+                body,
+                parentCommentId,
+                reactorKey = GuestSession.ReactorKey
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                SetError(postId, errorKey, "Could not post. Try again.");
+                return;
+            }
+
+            if (errorKey is Guid cleared)
+            {
+                _replyDrafts[cleared] = string.Empty;
+                _replyingTo = null;
+            }
+            else
+            {
+                _drafts[postId] = string.Empty;
+            }
+
+            await LoadAsync();
+        }
+        catch
+        {
+            SetError(postId, errorKey, "Could not post. Try again.");
+        }
+        finally
+        {
+            _commentingKey = null;
+        }
+    }
+
+    private void SetError(Guid postId, Guid? errorKey, string message)
+    {
+        if (errorKey is Guid key)
+        {
+            _replyErrors[key] = message;
+        }
+        else
+        {
+            _commentErrors[postId] = message;
+        }
+    }
+
+    private async Task DeleteCommentAsync(Guid postId, Guid commentId)
+    {
+        _deletingCommentId = commentId;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            var reactor = Uri.EscapeDataString(GuestSession.ReactorKey ?? string.Empty);
+            var response = await client.DeleteAsync($"/api/marketplace/activities/comments/{commentId}?reactorKey={reactor}");
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            if (_replyingTo == commentId)
+            {
+                _replyingTo = null;
+            }
+
+            await LoadAsync();
+        }
+        finally
+        {
+            _deletingCommentId = null;
+        }
+    }
+
+    private async Task ReactAsync(Guid postId, Guid commentId, string emoji)
+    {
+        await GuestSession.LoadAsync();
+        if (string.IsNullOrWhiteSpace(GuestSession.ReactorKey))
+        {
+            return;
+        }
+
+        _reactingCommentId = commentId;
+        _reactionHoverId = commentId;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            var response = await client.PostAsJsonAsync($"/api/marketplace/activities/comments/{commentId}/reactions", new
+            {
+                emoji,
+                reactorKey = GuestSession.ReactorKey
+            });
+            if (!response.IsSuccessStatusCode) return;
+
+            var result = await response.Content.ReadFromJsonAsync<ReactionToggleResponse>();
+            if (result is null) return;
+
+            ApplyReactions(postId, commentId, result.Reactions);
+        }
+        finally
+        {
+            _reactingCommentId = null;
+        }
+    }
+
+    private void ApplyReactions(Guid postId, Guid commentId, List<ReactionDto> reactions)
+    {
+        var postIndex = _posts.FindIndex(x => x.Id == postId);
+        if (postIndex < 0) return;
+
+        var post = _posts[postIndex];
+        var updatedComments = post.Comments.Select(c =>
+        {
+            if (c.Id == commentId)
+            {
+                return c with { Reactions = reactions };
+            }
+
+            if (c.Replies.Any(r => r.Id == commentId))
+            {
+                return c with
+                {
+                    Replies = c.Replies.Select(r => r.Id == commentId ? r with { Reactions = reactions } : r).ToList()
+                };
+            }
+
+            return c;
+        }).ToList();
+
+        _posts[postIndex] = post with { Comments = updatedComments };
+    }
+
+    private string ResolveMediaUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return url;
+        }
+
+        return $"{ApiBase}/{url.TrimStart('/')}";
+    }
+
+    private sealed record ActivityDto(
+        Guid Id,
+        Guid CompanyId,
+        string FarmName,
+        string Title,
+        string Body,
+        string? MediaUrl,
+        DateTimeOffset? PublishedAt,
+        int LikeCount,
+        int CommentCount,
+        int ShareCount,
+        bool LikedByMe,
+        List<CommentDto> Comments);
+
+    private sealed record CommentDto(
+        Guid Id,
+        Guid? ParentCommentId,
+        string AuthorName,
+        Guid? AuthorCompanyId,
+        string Body,
+        DateTimeOffset CreatedAt,
+        bool CanDelete,
+        List<ReactionDto> Reactions,
+        List<CommentDto> Replies);
+
+    private sealed record ReactionDto(string Emoji, int Count, bool ReactedByMe);
+    private sealed record LikeResponse(Guid PostId, int LikeCount, bool LikedByMe);
+    private sealed record ShareResponse(Guid PostId, int ShareCount, string ShareUrl);
+    private sealed record ReactionToggleResponse(Guid CommentId, bool Reacted, List<ReactionDto> Reactions);
+}

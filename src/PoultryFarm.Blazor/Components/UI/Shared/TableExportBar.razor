@@ -1,0 +1,93 @@
+@using Microsoft.JSInterop
+@using PoultryFarm.Blazor.Services
+@inject IJSRuntime JSRuntime
+@inject ISnackbar Snackbar
+
+<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="@Class">
+    @if (!string.IsNullOrWhiteSpace(Title))
+    {
+        <MudText Typo="Typo.subtitle2" Class="font-semibold">@Title</MudText>
+    }
+    <MudSpacer />
+    <MudButton Variant="Variant.Outlined"
+               Color="Color.Success"
+               Size="Size.Small"
+               StartIcon="@Icons.Material.Filled.TableView"
+               Disabled="@(Disabled || _busy)"
+               OnClick="ExportExcelAsync">
+        Excel
+    </MudButton>
+    <MudButton Variant="Variant.Outlined"
+               Color="Color.Error"
+               Size="Size.Small"
+               StartIcon="@Icons.Material.Filled.PictureAsPdf"
+               Disabled="@(Disabled || _busy)"
+               OnClick="ExportPdfAsync">
+        PDF
+    </MudButton>
+</MudStack>
+
+@code {
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string FileName { get; set; } = "export";
+    [Parameter] public string? Subtitle { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string? Class { get; set; } = "mb-2";
+    [Parameter, EditorRequired] public Func<TableExportPayload> GetPayload { get; set; } = default!;
+
+    private bool _busy;
+
+    private async Task ExportExcelAsync() => await ExportAsync(excel: true);
+
+    private async Task ExportPdfAsync() => await ExportAsync(excel: false);
+
+    private async Task ExportAsync(bool excel)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var payload = GetPayload();
+            if (payload.Headers.Count == 0)
+            {
+                Snackbar.Add("Nothing to export.", Severity.Warning);
+                return;
+            }
+
+            var safeName = SanitizeFileName(string.IsNullOrWhiteSpace(FileName) ? payload.Title : FileName);
+            byte[] bytes;
+            string fileName;
+            string contentType;
+            if (excel)
+            {
+                bytes = ReportExportHelper.ToExcelWorkbook(payload.Title, payload.Headers, payload.Rows);
+                fileName = $"{safeName}.xls";
+                contentType = "application/vnd.ms-excel";
+            }
+            else
+            {
+                bytes = ReportExportHelper.ToTablePdf(payload.Title, payload.Headers, payload.Rows, payload.Subtitle ?? Subtitle);
+                fileName = $"{safeName}.pdf";
+                contentType = "application/pdf";
+            }
+
+            await JSRuntime.InvokeVoidAsync("poultryFarmUi.downloadBytes", Convert.ToBase64String(bytes), fileName, contentType);
+            Snackbar.Add($"Downloaded {fileName}", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Export failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string SanitizeFileName(string name) =>
+        string.Join("_", name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries)).Replace(' ', '_');
+}

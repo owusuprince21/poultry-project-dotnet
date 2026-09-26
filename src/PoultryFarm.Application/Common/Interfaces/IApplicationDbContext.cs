@@ -5,6 +5,8 @@ using PoultryFarm.Domain.Communication;
 using PoultryFarm.Domain.Companies;
 using PoultryFarm.Domain.Feed;
 using PoultryFarm.Domain.Health;
+using PoultryFarm.Domain.Identity;
+using PoultryFarm.Domain.Marketplace;
 using PoultryFarm.Domain.Production;
 using PoultryFarm.Domain.Sales;
 using PoultryFarm.Domain.Schedules;
@@ -31,6 +33,17 @@ public interface IApplicationDbContext
     DbSet<ChatMessage> ChatMessages { get; }
     DbSet<FarmAssistanceMessage> FarmAssistanceMessages { get; }
     DbSet<AppNotification> AppNotifications { get; }
+    DbSet<FarmerRegistration> FarmerRegistrations { get; }
+    DbSet<MarketplaceListing> MarketplaceListings { get; }
+    DbSet<FarmActivityPost> FarmActivityPosts { get; }
+    DbSet<FarmActivityComment> FarmActivityComments { get; }
+    DbSet<FarmActivityCommentReaction> FarmActivityCommentReactions { get; }
+    DbSet<FarmActivityLike> FarmActivityLikes { get; }
+    DbSet<MarketplaceMediaAsset> MarketplaceMediaAssets { get; }
+    DbSet<MarketplaceInquiry> MarketplaceInquiries { get; }
+    DbSet<MarketplaceConversation> MarketplaceConversations { get; }
+    DbSet<PasswordInvite> PasswordInvites { get; }
+    DbSet<WorkerPagePermission> WorkerPagePermissions { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

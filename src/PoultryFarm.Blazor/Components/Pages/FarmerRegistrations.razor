@@ -1,0 +1,341 @@
+@page "/farmer-registrations"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using PoultryFarm.Blazor.Services
+@using PoultryFarm.Blazor.Components.UI.Shared
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject TableActionConfirm TableActionConfirm
+@inject NavBadgeState NavBadgeState
+
+<PageTitle>Farm Approvals</PageTitle>
+
+@if (!_loaded)
+{
+    <PageLoader Message="Loading farm approvals..." />
+}
+else if (!AuthSession.IsSuperAdmin)
+{
+    <ModulePageShell Title="Farm Approvals" Subtitle="This workspace is available to super admins only.">
+        <ModuleStatusPanel Title="Restricted workspace" Description="Only super administrators can approve farmer access." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
+    </ModulePageShell>
+}
+else
+{
+    <ModulePageShell Title="Farm Approvals" Subtitle="Approve applicants to create a farm and email a password-setup invite.">
+        @if (!string.IsNullOrWhiteSpace(_lastInviteUrl))
+        {
+            <MudAlert Severity="Severity.Info" Class="mb-3" Variant="Variant.Outlined">
+                Fallback invite URL (also emailed when Resend is configured): @_lastInviteUrl
+            </MudAlert>
+        }
+        <MudPaper Elevation="0" Class="pa-4 rounded-lg border border-slate-200">
+            <TableExportBar Title="Farm approvals"
+                            FileName="farm-approvals"
+                            Disabled="@(!_registrations.Any())"
+                            GetPayload="BuildExportPayload" />
+            <MudTable Items="_registrations" Dense="true" Hover="true" RowsPerPage="10">
+                <HeaderContent>
+                    <MudTh>Farm</MudTh>
+                    <MudTh>Contact</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Submitted</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Farm">
+                        <div>@context.FarmName</div>
+                        <MudText Typo="Typo.caption">@context.Location</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Contact">
+                        <div>@context.ContactFirstName @context.ContactLastName</div>
+                        <MudText Typo="Typo.caption">@context.Email · @context.Phone</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Status)" Variant="Variant.Outlined">@context.Status</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Submitted">@context.CreatedAt.ToLocalTime().ToString("g")</MudTd>
+                    <MudTd>
+                        <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                            <MudMenuItem Icon="@Icons.Material.Filled.Visibility" OnClick="@(() => OpenPreview(context))">Preview KYC</MudMenuItem>
+                            @if (context.Status == "Pending")
+                            {
+                                <MudMenuItem Icon="@Icons.Material.Filled.CheckCircle" OnClick="@(() => ApproveAsync(context))">Approve</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Filled.Cancel" OnClick="@(() => RejectAsync(context))">Reject</MudMenuItem>
+                            }
+                            else if (context.Status == "Approved")
+                            {
+                                <MudMenuItem Icon="@Icons.Material.Filled.Send" OnClick="@(() => ResendInviteAsync(context))">Resend invite</MudMenuItem>
+                            }
+                        </MudMenu>
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">No farmer registrations yet.</MudText>
+                </NoRecordsContent>
+                <PagerContent>
+                    <TablePager />
+                </PagerContent>
+            </MudTable>
+        </MudPaper>
+    </ModulePageShell>
+
+    <MudDialog @bind-Visible="_previewOpen" Options="_previewDialogOptions">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Farmer KYC preview</MudText>
+        </TitleContent>
+        <DialogContent>
+            @if (_preview is not null)
+            {
+                <MudStack Spacing="2">
+                    <MudChip T="string" Size="Size.Small" Color="@StatusColor(_preview.Status)" Variant="Variant.Filled">@_preview.Status</MudChip>
+                    @KycRow("Farm name", _preview.FarmName)
+                    @KycRow("Contact name", $"{_preview.ContactFirstName} {_preview.ContactLastName}".Trim())
+                    @KycRow("Email", _preview.Email)
+                    @KycRow("Phone", _preview.Phone)
+                    @KycRow("Location", string.IsNullOrWhiteSpace(_preview.Location) ? "—" : _preview.Location)
+                    @KycRow("Preferred username", string.IsNullOrWhiteSpace(_preview.RequestedUsername) ? "—" : _preview.RequestedUsername)
+                    @KycRow("Submitted", _preview.CreatedAt.ToLocalTime().ToString("f"))
+                    @KycRow("Reviewed", _preview.ReviewedAt?.ToLocalTime().ToString("f") ?? "—")
+                    @KycRow("Review notes", string.IsNullOrWhiteSpace(_preview.ReviewNotes) ? "—" : _preview.ReviewNotes)
+                    <div>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Applicant notes</MudText>
+                        <MudText Typo="Typo.body2" Style="white-space:pre-wrap;">@(string.IsNullOrWhiteSpace(_preview.Notes) ? "—" : _preview.Notes)</MudText>
+                    </div>
+                    @if (_preview.CompanyId is Guid companyId)
+                    {
+                        @KycRow("Company ID", companyId.ToString())
+                    }
+                    @if (_preview.FarmAdminUserId is Guid userId)
+                    {
+                        @KycRow("Farm admin user ID", userId.ToString())
+                    }
+                </MudStack>
+            }
+        </DialogContent>
+        <DialogActions>
+            @if (_preview?.Status == "Pending")
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => RejectFromPreviewAsync())">Reject</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@(() => ApproveFromPreviewAsync())">Approve</MudButton>
+            }
+            <MudButton Variant="Variant.Text" OnClick="@(() => _previewOpen = false)">Close</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<FarmerRegistrationRow> _registrations = [];
+    private bool _loaded;
+    private string? _lastInviteUrl;
+    private bool _previewOpen;
+    private FarmerRegistrationRow? _preview;
+    private readonly DialogOptions _previewDialogOptions = new()
+    {
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true,
+        CloseOnEscapeKey = true
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated) { Navigation.NavigateTo("/", replace: true); return; }
+        if (AuthSession.MustChangePassword) { Navigation.NavigateTo("/force-password-change", replace: true); return; }
+        if (AuthSession.IsSuperAdmin) await LoadAsync();
+        _loaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        var client = CreateApiClient();
+        try
+        {
+            var response = await client.GetAsync("/api/marketplace/registrations");
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response, "Registrations could not be loaded."), Severity.Error);
+                return;
+            }
+
+            _registrations = await response.Content.ReadFromJsonAsync<List<FarmerRegistrationRow>>() ?? [];
+            NavBadgeState.SetPendingFarmerRegistrations(_registrations.Count(x => x.Status == "Pending"));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "Registrations could not be loaded.", client.BaseAddress), Severity.Error);
+        }
+    }
+
+    private void OpenPreview(FarmerRegistrationRow row)
+    {
+        _preview = row;
+        _previewOpen = true;
+    }
+
+    private async Task ApproveFromPreviewAsync()
+    {
+        if (_preview is null) return;
+        await ApproveAsync(_preview);
+        _previewOpen = false;
+    }
+
+    private async Task RejectFromPreviewAsync()
+    {
+        if (_preview is null) return;
+        await RejectAsync(_preview);
+        _previewOpen = false;
+    }
+
+    private async Task ApproveAsync(FarmerRegistrationRow row)
+    {
+        if (!await TableActionConfirm.ConfirmAsync("approve", row.FarmName))
+        {
+            return;
+        }
+
+        var client = CreateApiClient();
+        try
+        {
+            var response = await client.PostAsJsonAsync($"/api/marketplace/registrations/{row.Id}/approve", new { });
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<ApproveResult>();
+            _lastInviteUrl = result?.InviteUrl;
+            if (result?.EmailSent == true)
+            {
+                Snackbar.Add($"Approved {row.FarmName}. Invitation emailed to {row.Email}.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add($"Approved {row.FarmName}, but the invitation email was not sent. Use the invite URL below or configure Resend.", Severity.Warning);
+            }
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "Approve failed.", client.BaseAddress), Severity.Error);
+        }
+    }
+
+    private async Task RejectAsync(FarmerRegistrationRow row)
+    {
+        if (!await TableActionConfirm.ConfirmAsync("reject", row.FarmName))
+        {
+            return;
+        }
+
+        var client = CreateApiClient();
+        try
+        {
+            var response = await client.PostAsJsonAsync($"/api/marketplace/registrations/{row.Id}/reject", new { reviewNotes = "Rejected by super admin." });
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            Snackbar.Add($"Rejected {row.FarmName}.", Severity.Info);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "Reject failed.", client.BaseAddress), Severity.Error);
+        }
+    }
+
+    private async Task ResendInviteAsync(FarmerRegistrationRow row)
+    {
+        if (!await TableActionConfirm.ConfirmAsync("resend invite for", row.FarmName))
+        {
+            return;
+        }
+
+        var client = CreateApiClient();
+        try
+        {
+            var response = await client.PostAsync($"/api/marketplace/registrations/{row.Id}/resend-invite", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<ResendResult>();
+            _lastInviteUrl = result?.InviteUrl;
+            if (result?.EmailSent == true)
+            {
+                Snackbar.Add($"Invitation resent to {row.Email}.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add("Invite regenerated, but the email was not sent. Check Resend configuration or use the invite URL.", Severity.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ApiErrorFormatter.FormatException(ex, "Resend failed.", client.BaseAddress), Severity.Error);
+        }
+    }
+
+    private TableExportPayload BuildExportPayload()
+    {
+        var headers = new[] { "Farm", "Location", "Contact", "Email", "Phone", "Status", "Submitted", "Reviewed", "Notes" };
+        var rows = _registrations.Select(r => (IReadOnlyList<string>)
+        [
+            r.FarmName,
+            r.Location ?? string.Empty,
+            $"{r.ContactFirstName} {r.ContactLastName}".Trim(),
+            r.Email,
+            r.Phone,
+            r.Status,
+            r.CreatedAt.ToLocalTime().ToString("g"),
+            r.ReviewedAt?.ToLocalTime().ToString("g") ?? string.Empty,
+            r.ReviewNotes ?? r.Notes ?? string.Empty
+        ]).ToList();
+
+        return new TableExportPayload("Farm Approvals", headers, rows, $"Exported {DateTime.Now:g}");
+    }
+
+    private static Color StatusColor(string status) => status switch
+    {
+        "Pending" => Color.Warning,
+        "Approved" => Color.Success,
+        "Rejected" => Color.Error,
+        _ => Color.Default
+    };
+
+    private static RenderFragment KycRow(string label, string value) => __builder =>
+    {
+        <div>
+            <MudText Typo="Typo.caption" Color="Color.Secondary">@label</MudText>
+            <MudText Typo="Typo.body1">@value</MudText>
+        </div>
+    };
+
+    private HttpClient CreateApiClient()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+        return client;
+    }
+
+    private sealed record FarmerRegistrationRow(
+        Guid Id, string FarmName, string ContactFirstName, string ContactLastName, string Email, string Phone,
+        string? Location, string? Notes, string? RequestedUsername, string Status, string? ReviewNotes,
+        DateTimeOffset? ReviewedAt, Guid? CompanyId, Guid? FarmAdminUserId, DateTimeOffset CreatedAt);
+
+    private sealed record ApproveResult(string? Username, string? InviteUrl, bool EmailSent);
+    private sealed record ResendResult(string? InviteUrl, bool EmailSent);
+}

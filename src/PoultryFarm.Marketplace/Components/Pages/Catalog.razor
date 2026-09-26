@@ -1,0 +1,178 @@
+@page "/catalog"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using System.Net.Http.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
+@inject NavigationManager Navigation
+
+<section class="section-band catalog-hero">
+    <div class="section">
+        <p class="eyebrow">Marketplace catalog</p>
+        <h1>Eggs &amp; birds from verified farms</h1>
+        <p class="section-intro">
+            Browse live inventory published by approved farms. Filter by category and open any listing to inquire.
+        </p>
+        <div class="catalog-stats">
+            <div class="catalog-stat">
+                <strong>@_listings.Count</strong>
+                <span>Listings</span>
+            </div>
+            <div class="catalog-stat">
+                <strong>@_eggCount</strong>
+                <span>Egg offers</span>
+            </div>
+            <div class="catalog-stat">
+                <strong>@_birdCount</strong>
+                <span>Bird offers</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="section-band muted">
+    <div class="section">
+        <div class="section-head">
+            <div>
+                <h2>All listings</h2>
+                <p>Published inventory ready for inquiry.</p>
+            </div>
+            <div class="filter-row compact">
+                <button type="button" class="chip @(_filter == "All" ? "active" : null)" @onclick='() => SetFilter("All")'>All</button>
+                <button type="button" class="chip @(_filter == "Eggs" ? "active" : null)" @onclick='() => SetFilter("Eggs")'>Eggs</button>
+                <button type="button" class="chip @(_filter == "Birds" ? "active" : null)" @onclick='() => SetFilter("Birds")'>Birds</button>
+            </div>
+        </div>
+
+        @if (_loading)
+        {
+            <div class="skeleton-grid" aria-hidden="true">
+                @for (var i = 0; i < 8; i++)
+                {
+                    <div class="skeleton-card"></div>
+                }
+            </div>
+        }
+        else if (FilteredListings.Count == 0)
+        {
+            <div class="empty-state">
+                <h3>No listings in this category yet</h3>
+                <p>Check back soon, or browse verified farms while inventory is being published.</p>
+                <a class="btn secondary" href="/farms">View farms</a>
+            </div>
+        }
+        else
+        {
+            <div class="listing-grid">
+                @foreach (var listing in FilteredListings)
+                {
+                    <article class="listing-card" @onclick="@(() => Navigation.NavigateTo($"/listings/{listing.Id}"))">
+                        <div class="listing-media @(listing.ListingType.Equals("Birds", StringComparison.OrdinalIgnoreCase) ? "birds" : null)"
+                             style="@ListingMediaStyle(listing)">
+                            <span class="tag">@listing.ListingType</span>
+                        </div>
+                        <div class="listing-body">
+                            <h3>@listing.Title</h3>
+                            <p class="listing-meta">@listing.FarmName</p>
+                            <p class="listing-meta">@ListingQuantityText.Available(listing.QuantityOffered, listing.UnitLabel)</p>
+                            <div class="listing-footer">
+                                <p class="price">@(listing.PriceText ?? "Ask for price")</p>
+                                <span class="listing-meta">Inquire →</span>
+                            </div>
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    private bool _loading = true;
+    private string _filter = "All";
+    private List<ListingDto> _listings = [];
+    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+
+    private IReadOnlyList<ListingDto> FilteredListings =>
+        _filter == "All"
+            ? _listings
+            : _listings.Where(x => x.ListingType.Equals(_filter, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private int _eggCount => _listings.Count(x => x.ListingType.Equals("Eggs", StringComparison.OrdinalIgnoreCase));
+    private int _birdCount => _listings.Count(x => x.ListingType.Equals("Birds", StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        ApplyQueryFilter();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            _listings = await client.GetFromJsonAsync<List<ListingDto>>("/api/marketplace/listings") ?? [];
+        }
+        catch
+        {
+            _listings = [];
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ApplyQueryFilter()
+    {
+        var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("type", out var type))
+        {
+            var value = type.ToString();
+            if (value.Equals("Eggs", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("Birds", StringComparison.OrdinalIgnoreCase))
+            {
+                _filter = char.ToUpperInvariant(value[0]) + value[1..].ToLowerInvariant();
+            }
+        }
+    }
+
+    private void SetFilter(string filter)
+    {
+        _filter = filter;
+        var href = filter == "All" ? "/catalog" : $"/catalog?type={Uri.EscapeDataString(filter)}";
+        Navigation.NavigateTo(href, replace: true);
+    }
+
+    private string? ListingMediaStyle(ListingDto listing)
+    {
+        if (string.IsNullOrWhiteSpace(listing.ImageUrl))
+        {
+            return null;
+        }
+
+        return $"background-image: linear-gradient(135deg, rgba(15, 23, 42, 0.18), rgba(15, 23, 42, 0.35)), url('{ResolveMediaUrl(listing.ImageUrl)}');";
+    }
+
+    private string ResolveMediaUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return url;
+        }
+
+        return $"{ApiBase}/{url.TrimStart('/')}";
+    }
+
+    private sealed record ListingDto(
+        Guid Id,
+        Guid CompanyId,
+        string FarmName,
+        string ListingType,
+        string Title,
+        string? Description,
+        decimal? QuantityOffered,
+        string UnitLabel,
+        decimal? PriceAmount,
+        string? PriceText,
+        string? ImageUrl,
+        DateTimeOffset? PublishedAt);
+}

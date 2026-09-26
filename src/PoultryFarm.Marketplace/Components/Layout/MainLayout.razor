@@ -1,0 +1,61 @@
+﻿@inherits LayoutComponentBase
+
+<div class="market-shell">
+    <SiteHeader />
+    <main>
+        @Body
+    </main>
+    <footer class="site-footer">
+        <div class="site-footer-inner">
+            <div class="site-footer-main">
+                <div class="site-footer-brand-block">
+                    <a class="site-footer-brand" href="/">
+                        <img src="/logos/akoko-papa-logo-horizontal.svg" alt="Akokɔ Papa" />
+                    </a>
+                    <p>
+                        Ghana’s marketplace for verified poultry farms. Browse eggs and birds,
+                        message sellers directly, and follow farm updates in one place.
+                    </p>
+                    <div class="site-footer-pills">
+                        <span>Verified farms</span>
+                        <span>Inquiry-based deals</span>
+                        <span>Live inventory</span>
+                    </div>
+                </div>
+
+                <div class="site-footer-links">
+                    <h4>Explore</h4>
+                    <a href="/">Home</a>
+                    <a href="/farms">Farms</a>
+                    <a href="/catalog">Catalog</a>
+                    <a href="/activities">Farm Blog</a>
+                </div>
+
+                <div class="site-footer-links">
+                    <h4>For farms</h4>
+                    <a href="/apply">Apply to sell</a>
+                    <a href="/activities">Share farm updates</a>
+                    <a href="@(Configuration["Apps:FarmBlazorBaseUrl"] ?? "http://localhost:5083")">Farm dashboard</a>
+                </div>
+
+                <div class="site-footer-links">
+                    <h4>Buying</h4>
+                    <p>
+                        No buyer account needed. Open a listing, start a chat, and arrange
+                        payment and delivery with the farm.
+                    </p>
+                    <a class="site-footer-cta" href="/catalog">Browse catalog</a>
+                </div>
+            </div>
+
+            <div class="site-footer-bottom">
+                <p>© @DateTime.Now.Year Akokɔ Papa. All rights reserved.</p>
+                <p class="site-footer-bottom-note">Only approved farms that complete setup appear publicly.</p>
+            </div>
+        </div>
+    </footer>
+</div>
+
+@code {
+    [Inject] private IConfiguration Configuration { get; set; } = default!;
+}

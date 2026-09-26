@@ -1,0 +1,230 @@
+@page "/farms/{Id:guid}"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using System.Net.Http.Json
+@inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
+@inject NavigationManager Navigation
+
+<section class="section-band">
+    <div class="section">
+        <a class="back-link" href="/farms">&larr; All farms</a>
+
+        @if (_loading)
+        {
+            <div class="empty-state">Loading farm profile...</div>
+        }
+        else if (_farm is null)
+        {
+            <div class="empty-state">
+                <h3>Farm not available</h3>
+                <p>This farm is not active on the marketplace yet, or the link is invalid.</p>
+                <a class="btn secondary" href="/farms">Browse farms</a>
+            </div>
+        }
+        else
+        {
+            <div class="farm-detail-hero">
+                <div class="farm-detail-mark @FarmBannerTone(_farm.Id)" aria-hidden="true">@Initials(_farm.Name)</div>
+                <div class="farm-detail-copy">
+                    <p class="eyebrow">Verified farm</p>
+                    <div class="farm-card-title-row">
+                        <h1>@_farm.Name</h1>
+                        <span class="verified-badge" title="Verified farm">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path fill="currentColor" d="M12 2.5 14.1 4l2.5-.4 1.1 2.3 2.3 1.1-.4 2.5L22 12l-2.4 1.5.4 2.5-2.3 1.1-1.1 2.3-2.5-.4L12 21.5 9.9 20l-2.5.4-1.1-2.3-2.3-1.1.4-2.5L2 12l2.4-1.5-.4-2.5 2.3-1.1 1.1-2.3 2.5.4L12 2.5Zm-1.2 12.1 4.9-4.9-1.4-1.4-3.5 3.5-1.6-1.6-1.4 1.4 3 3Z" />
+                            </svg>
+                            Verified
+                        </span>
+                    </div>
+                    <p class="farm-card-location">@(string.IsNullOrWhiteSpace(_farm.Location) ? "Ghana" : _farm.Location)</p>
+                    <p class="farm-detail-summary">@_farm.Summary</p>
+                    <div class="farm-card-tags">
+                        @if (_farm.SellsEggs)
+                        {
+                            <span class="farm-tag">Eggs</span>
+                        }
+                        @if (_farm.SellsBirds)
+                        {
+                            <span class="farm-tag birds">Birds</span>
+                        }
+                        @if (!_farm.SellsEggs && !_farm.SellsBirds)
+                        {
+                            <span class="farm-tag muted">No live listings yet</span>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="farm-detail-grid">
+                <aside class="farm-detail-panel">
+                    <h2>About this farm</h2>
+                    <dl class="farm-meta-list">
+                        <div>
+                            <dt>Contact</dt>
+                            <dd>@_farm.ContactName</dd>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(_farm.ContactPhone))
+                        {
+                            <div>
+                                <dt>Phone</dt>
+                                <dd>@_farm.ContactPhone</dd>
+                            </div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_farm.ContactEmail))
+                        {
+                            <div>
+                                <dt>Email</dt>
+                                <dd>@_farm.ContactEmail</dd>
+                            </div>
+                        }
+                        <div>
+                            <dt>Location</dt>
+                            <dd>@(string.IsNullOrWhiteSpace(_farm.Location) ? "—" : _farm.Location)</dd>
+                        </div>
+                        <div>
+                            <dt>Joined</dt>
+                            <dd>@(_farm.JoinedAt?.ToLocalTime().ToString("MMM yyyy") ?? "—")</dd>
+                        </div>
+                        <div>
+                            <dt>Live offers</dt>
+                            <dd>@_farm.ActiveListingCount</dd>
+                        </div>
+                    </dl>
+                    @if (!string.IsNullOrWhiteSpace(_farm.Notes))
+                    {
+                        <div class="farm-notes">
+                            <h3>What they do</h3>
+                            <p>@_farm.Notes</p>
+                        </div>
+                    }
+                </aside>
+
+                <div class="farm-detail-listings">
+                    <div class="section-head">
+                        <div>
+                            <h2>Current listings</h2>
+                            <p>Eggs and birds this farm is selling right now.</p>
+                        </div>
+                    </div>
+
+                    @if (_farm.Listings.Count == 0)
+                    {
+                        <div class="empty-state compact">
+                            <h3>No published listings</h3>
+                            <p>This farm is active but has not published inventory yet.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="listing-grid">
+                            @foreach (var listing in _farm.Listings)
+                            {
+                                <article class="listing-card" @onclick="@(() => Navigation.NavigateTo($"/listings/{listing.Id}"))">
+                                    <div class="listing-media @(listing.ListingType.Equals("Birds", StringComparison.OrdinalIgnoreCase) ? "birds" : null)"
+                                         style="@ListingMediaStyle(listing)">
+                                        <span class="tag">@listing.ListingType</span>
+                                    </div>
+                                    <div class="listing-body">
+                                        <h3>@listing.Title</h3>
+                                        <p class="listing-meta">@ListingQuantityText.Available(listing.QuantityOffered, listing.UnitLabel)</p>
+                                        <div class="listing-footer">
+                                            <p class="price">@(listing.PriceText ?? "Ask for price")</p>
+                                            <span class="listing-meta">Inquire →</span>
+                                        </div>
+                                    </div>
+                                </article>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool _loading = true;
+    private FarmDetailDto? _farm;
+    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            var response = await client.GetAsync($"/api/marketplace/farms/{Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                _farm = await response.Content.ReadFromJsonAsync<FarmDetailDto>();
+            }
+            else
+            {
+                _farm = null;
+            }
+        }
+        catch
+        {
+            _farm = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private string ListingMediaStyle(ListingDto listing)
+    {
+        if (!string.IsNullOrWhiteSpace(listing.ImageUrl))
+        {
+            var url = listing.ImageUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                ? listing.ImageUrl
+                : $"{ApiBase}/{listing.ImageUrl.TrimStart('/')}";
+            return $"background-image:url('{url}');";
+        }
+
+        return string.Empty;
+    }
+
+    private static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0) return "F";
+        if (parts.Length == 1) return parts[0][..Math.Min(2, parts[0].Length)].ToUpperInvariant();
+        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+
+    private static string FarmBannerTone(Guid id)
+        => $"tone-{Math.Abs(id.GetHashCode()) % 6}";
+
+    private sealed record ListingDto(
+        Guid Id,
+        Guid CompanyId,
+        string FarmName,
+        string ListingType,
+        string Title,
+        string? Description,
+        decimal? QuantityOffered,
+        string UnitLabel,
+        decimal? PriceAmount,
+        string? PriceText,
+        string? ImageUrl,
+        DateTimeOffset? PublishedAt);
+
+    private sealed record FarmDetailDto(
+        Guid Id,
+        string Name,
+        string? Location,
+        string Summary,
+        bool SellsEggs,
+        bool SellsBirds,
+        int ActiveListingCount,
+        string? ContactPhone,
+        string? ContactEmail,
+        string ContactName,
+        string? Notes,
+        DateTimeOffset? JoinedAt,
+        List<ListingDto> Listings);
+}

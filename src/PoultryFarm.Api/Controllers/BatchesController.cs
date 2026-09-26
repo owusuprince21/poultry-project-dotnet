@@ -1,4 +1,6 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PoultryFarm.Api.Authorization;
@@ -6,13 +8,17 @@ using PoultryFarm.Application.Batches.DTOs;
 using PoultryFarm.Application.Common.Interfaces;
 using PoultryFarm.Domain.Batches;
 using PoultryFarm.Domain.Common;
+using PoultryFarm.Infrastructure.Identity;
 
 namespace PoultryFarm.Api.Controllers;
 
 [ApiController]
 [Route("api/batches")]
 [Authorize]
-public sealed class BatchesController(IApplicationDbContext dbContext, IActivityNotifier activityNotifier) : ControllerBase
+public sealed class BatchesController(
+    IApplicationDbContext dbContext,
+    IActivityNotifier activityNotifier,
+    UserManager<ApplicationUser> userManager) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<IReadOnlyCollection<BatchDto>>> Get([FromQuery] Guid? company, CancellationToken cancellationToken)
@@ -97,11 +103,15 @@ public sealed class BatchesController(IApplicationDbContext dbContext, IActivity
         batch.SyncCountsFromVariants();
         dbContext.Batches.Add(batch);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        var actor = await GetActorAsync();
+        var colorSummary = string.Join(", ", batch.Variants.Select(v => $"{v.Color}: {v.InitialCount:N0}"));
         await activityNotifier.NotifyCompanyAsync(
             batch.CompanyId,
             "Batch created",
-            $"Batch {batch.BatchNumber} was created.",
-            actorName: "Farm operations",
+            $"{actor.Name} created batch {batch.BatchNumber} ({batch.BirdType}, {batch.Breed}) with {batch.InitialCount:N0} birds{(string.IsNullOrWhiteSpace(colorSummary) ? "" : $" — {colorSummary}")}.",
+            actor.Id,
+            actor.Name,
             targetType: "batch",
             targetId: batch.Id,
             cancellationToken: cancellationToken);
@@ -235,11 +245,14 @@ public sealed class BatchesController(IApplicationDbContext dbContext, IActivity
 
         batch.Status = BatchStatus.Sold;
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        var actor = await GetActorAsync();
         await activityNotifier.NotifyCompanyAsync(
             batch.CompanyId,
             "Batch marked for sale",
-            $"Batch {batch.BatchNumber} ({batch.Breed}) was marked ready for bird sales.",
-            actorName: "Batch management",
+            $"{actor.Name} marked batch {batch.BatchNumber} ({batch.Breed}) as ready for bird sales.",
+            actor.Id,
+            actor.Name,
             targetType: "batch",
             targetId: batch.Id,
             cancellationToken: cancellationToken);
@@ -283,6 +296,25 @@ public sealed class BatchesController(IApplicationDbContext dbContext, IActivity
                 current_count = v.CurrentCount
             })
         });
+    }
+
+    private async Task<(Guid? Id, string Name)> GetActorAsync()
+    {
+        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdValue, out var userId))
+        {
+            return (null, "A team member");
+        }
+
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        if (user is null)
+        {
+            return (userId, "A team member");
+        }
+
+        var fullName = $"{user.FirstName} {user.LastName}".Trim();
+        var name = string.IsNullOrWhiteSpace(fullName) ? user.UserName ?? "A team member" : fullName;
+        return (user.Id, name);
     }
 
     private async Task<string> GenerateBatchNumber(Guid companyId, DateOnly arrivalDate, CancellationToken cancellationToken)

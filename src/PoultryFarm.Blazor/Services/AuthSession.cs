@@ -16,6 +16,7 @@ public sealed class AuthSession
     private const string CompanyNameKey = "auth_company_name";
     private const string CompanyCodeKey = "auth_company_code";
     private const string MustChangePasswordKey = "auth_must_change_password";
+    private const string AllowedPagesKey = "auth_allowed_pages";
 
     public AuthSession(ProtectedSessionStorage sessionStorage)
     {
@@ -23,6 +24,9 @@ public sealed class AuthSession
     }
 
     public bool IsLoaded { get; private set; }
+
+    /// <summary>Raised after sign-in, sign-out, or session load so idle logout and UI can react for every role.</summary>
+    public event Func<Task>? Changed;
 
     public bool IsAuthenticated => !string.IsNullOrWhiteSpace(Token);
 
@@ -36,6 +40,7 @@ public sealed class AuthSession
     public string? CompanyName { get; private set; }
     public string? CompanyCode { get; private set; }
     public bool MustChangePassword { get; private set; }
+    public IReadOnlyCollection<string> AllowedPages { get; private set; } = [];
 
     public string DisplayName
     {
@@ -60,6 +65,16 @@ public sealed class AuthSession
     public bool IsFarmAdmin => Role == "farm_admin";
     public bool IsWorker => Role == "worker";
 
+    public bool CanAccessPage(string pageKey)
+    {
+        if (!IsWorker)
+        {
+            return true;
+        }
+
+        return AllowedPages.Contains(pageKey, StringComparer.OrdinalIgnoreCase);
+    }
+
     public async Task LoadAsync()
     {
         if (IsLoaded)
@@ -77,9 +92,10 @@ public sealed class AuthSession
         CompanyName = (await _sessionStorage.GetAsync<string>(CompanyNameKey)).Value;
         CompanyCode = (await _sessionStorage.GetAsync<string>(CompanyCodeKey)).Value;
         MustChangePassword = (await _sessionStorage.GetAsync<bool>(MustChangePasswordKey)).Value;
+        AllowedPages = (await _sessionStorage.GetAsync<string[]>(AllowedPagesKey)).Value ?? [];
 
         IsLoaded = true;
-
+        await RaiseChangedAsync();
     }
 
     public async Task SignInAsync(string token, LoginUser user)
@@ -94,6 +110,7 @@ public sealed class AuthSession
         CompanyName = user.Company?.Name;
         CompanyCode = user.Company?.Code;
         MustChangePassword = user.MustChangePassword;
+        AllowedPages = user.AllowedPages ?? [];
         IsLoaded = true;
 
         await _sessionStorage.SetAsync(TokenKey, Token);
@@ -113,7 +130,8 @@ public sealed class AuthSession
         await _sessionStorage.SetAsync(CompanyNameKey, CompanyName ?? string.Empty);
         await _sessionStorage.SetAsync(CompanyCodeKey, CompanyCode ?? string.Empty);
         await _sessionStorage.SetAsync(MustChangePasswordKey, MustChangePassword);
-
+        await _sessionStorage.SetAsync(AllowedPagesKey, AllowedPages.ToArray());
+        await RaiseChangedAsync();
     }
 
     public async Task SignOutAsync()
@@ -128,6 +146,7 @@ public sealed class AuthSession
         CompanyName = null;
         CompanyCode = null;
         MustChangePassword = false;
+        AllowedPages = [];
         IsLoaded = true;
 
         await _sessionStorage.DeleteAsync(TokenKey);
@@ -140,12 +159,24 @@ public sealed class AuthSession
         await _sessionStorage.DeleteAsync(CompanyNameKey);
         await _sessionStorage.DeleteAsync(CompanyCodeKey);
         await _sessionStorage.DeleteAsync(MustChangePasswordKey);
+        await _sessionStorage.DeleteAsync(AllowedPagesKey);
+        await RaiseChangedAsync();
     }
 
     public async Task MarkPasswordChangedAsync()
     {
         MustChangePassword = false;
         await _sessionStorage.SetAsync(MustChangePasswordKey, false);
+    }
+
+    private async Task RaiseChangedAsync()
+    {
+        if (Changed is null)
+        {
+            return;
+        }
+
+        await Changed.Invoke();
     }
 
     public async Task UpdateProfileAsync(string username, string? firstName, string? lastName)
@@ -226,7 +257,8 @@ public sealed record LoginUser(
     bool IsSystemAdmin,
     bool IsSuperuser,
     bool MustChangePassword,
-    bool TwoFactorEnabled);
+    bool TwoFactorEnabled,
+    IReadOnlyCollection<string>? AllowedPages = null);
 
 public sealed record LoginCompany(
     Guid Id,

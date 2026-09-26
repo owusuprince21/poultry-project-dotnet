@@ -1,0 +1,57 @@
+@rendermode InteractiveServer
+
+<header class="topbar">
+    <a class="brand" href="/" @onclick="CloseNav">
+        <img src="/logos/akoko-papa-logo-horizontal.svg" alt="Akokɔ Papa" class="brand-logo" />
+    </a>
+
+    <button type="button"
+            class="nav-toggle @(_navOpen ? "is-open" : null)"
+            aria-label="@(_navOpen ? "Close menu" : "Open menu")"
+            aria-expanded="@_navOpen"
+            @onclick="ToggleNav">
+        @if (_navOpen)
+        {
+            <svg class="nav-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path fill="#2563eb" d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7A1 1 0 0 0 5.7 7.11L10.59 12 5.7 16.89a1 1 0 1 0 1.41 1.41L12 13.41l4.89 4.89a1 1 0 0 0 1.41-1.41L13.41 12l4.89-4.89a1 1 0 0 0 0-1.4Z" />
+            </svg>
+        }
+        else
+        {
+            <span></span>
+            <span></span>
+            <span></span>
+        }
+    </button>
+
+    <div class="topbar-menu @(_navOpen ? "is-open" : null)">
+        <div class="topbar-menu-header">
+            <span>Menu</span>
+            <button type="button" class="nav-close" aria-label="Close menu" @onclick="CloseNav">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path fill="#2563eb" d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7A1 1 0 0 0 5.7 7.11L10.59 12 5.7 16.89a1 1 0 1 0 1.41 1.41L12 13.41l4.89 4.89a1 1 0 0 0 1.41-1.41L13.41 12l4.89-4.89a1 1 0 0 0 0-1.4Z" />
+                </svg>
+            </button>
+        </div>
+        <nav>
+            <a href="/" @onclick="CloseNav">Home</a>
+            <a href="/farms" @onclick="CloseNav">Farms</a>
+            <a href="/catalog" @onclick="CloseNav">Catalog</a>
+            <a href="/activities" @onclick="CloseNav">Farm Blog</a>
+        </nav>
+        <a class="topbar-cta" href="/apply" @onclick="CloseNav">Register Your Farm</a>
+    </div>
+</header>
+
+@if (_navOpen)
+{
+    <div class="nav-backdrop" @onclick="CloseNav"></div>
+}
+
+@code {
+    private bool _navOpen;
+
+    private void ToggleNav() => _navOpen = !_navOpen;
+
+    private void CloseNav() => _navOpen = false;
+}

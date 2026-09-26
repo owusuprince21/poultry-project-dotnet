@@ -1,0 +1,545 @@
+﻿@page "/"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using System.Net.Http.Json
+@using Microsoft.JSInterop
+@inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
+@inject NavigationManager Navigation
+@inject IJSRuntime Js
+@implements IAsyncDisposable
+
+<section class="hero-carousel" aria-label="Akokɔ Papa highlights">
+    @for (var i = 0; i < _slides.Length; i++)
+    {
+        var slide = _slides[i];
+        <div class="hero-slide @(_slideIndex == i ? "active" : null)"
+             style="@($"background-image: linear-gradient(180deg, rgba(15, 23, 42, 0.28), rgba(15, 23, 42, 0.78)), url('{slide.ImageUrl}');")">
+            <div class="hero-inner">
+                <span class="hero-badge">Akokɔ Papa</span>
+                <h1>@slide.Title</h1>
+                <p class="hero-copy">@slide.Copy</p>
+                <div class="hero-actions">
+                    <a class="btn primary" href="@slide.PrimaryHref">@slide.PrimaryLabel</a>
+                    <a class="btn ghost" href="@slide.SecondaryHref">@slide.SecondaryLabel</a>
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="hero-controls">
+        <button type="button" class="hero-nav" @onclick="PrevSlide" aria-label="Previous slide">‹</button>
+        <div class="hero-dots">
+            @for (var i = 0; i < _slides.Length; i++)
+            {
+                var index = i;
+                <button type="button"
+                        class="hero-dot @(_slideIndex == index ? "active" : null)"
+                        @onclick="() => GoToSlide(index)"
+                        aria-label="@($"Go to slide {index + 1}")"></button>
+            }
+        </div>
+        <button type="button" class="hero-nav" @onclick="NextSlide" aria-label="Next slide">›</button>
+    </div>
+</section>
+
+<section class="section-band">
+    <div class="section stats-row">
+        <div class="stat-card">
+            <strong>@_listings.Count</strong>
+            <span>Live listings</span>
+        </div>
+        <div class="stat-card">
+            <strong>@_farmCount</strong>
+            <span>Verified farms</span>
+        </div>
+        <div class="stat-card">
+            <strong>@_eggCount</strong>
+            <span>Egg offers</span>
+        </div>
+        <div class="stat-card">
+            <strong>@_birdCount</strong>
+            <span>Bird offers</span>
+        </div>
+    </div>
+</section>
+
+<section class="section-band muted">
+    <div class="section">
+        <div class="section-head">
+            <div>
+                <h2>Shop by category</h2>
+                <p>Start with what you need — eggs for the table or birds for restocking.</p>
+            </div>
+        </div>
+        <div class="category-grid">
+            <button type="button" class="category-card" @onclick='() => JumpToFilter("Eggs")'>
+                <span class="category-kicker">Eggs</span>
+                <h3>Farm-gate egg inventory</h3>
+                <p>Crates and trays published from daily production records.</p>
+            </button>
+            <button type="button" class="category-card" @onclick='() => JumpToFilter("Birds")'>
+                <span class="category-kicker">Birds</span>
+                <h3>Batches ready for sale</h3>
+                <p>Layers and broilers pushed from farm batch management.</p>
+            </button>
+            <a class="category-card" href="/farms">
+                <span class="category-kicker">Farms</span>
+                <h3>Browse verified farms</h3>
+                <p>Meet approved sellers and see what each farm offers.</p>
+            </a>
+        </div>
+    </div>
+</section>
+
+@if (!_loading && _farms.Count > 0)
+{
+    <section id="farms" class="section-band">
+        <div class="section">
+            <div class="section-head">
+                <div>
+                    <h2>Featured farms</h2>
+                    <p>Approved farms that are live on Akokɔ Papa.</p>
+                </div>
+                <div class="farm-carousel-actions">
+                    <button type="button" class="hero-nav" @onclick="PrevFarm" aria-label="Previous farms">‹</button>
+                    <button type="button" class="hero-nav" @onclick="NextFarm" aria-label="Next farms">›</button>
+                    <a class="section-link" href="/farms">See all</a>
+                </div>
+            </div>
+
+            <div class="farm-carousel" @ref="_farmCarousel">
+                @foreach (var farm in _farms)
+                {
+                    <article class="farm-card farm-carousel-card" @onclick="@(() => Navigation.NavigateTo($"/farms/{farm.Id}"))">
+                        <div class="farm-card-banner @FarmBannerTone(farm.Id)" aria-hidden="true">
+                            <span class="farm-card-initials">@FarmInitials(farm.Name)</span>
+                        </div>
+                        <div class="farm-card-body">
+                            <div class="farm-card-title-row">
+                                <h3>@farm.Name</h3>
+                                <span class="verified-badge" title="Verified farm">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                        <path fill="currentColor" d="M12 2.5 14.1 4l2.5-.4 1.1 2.3 2.3 1.1-.4 2.5L22 12l-2.4 1.5.4 2.5-2.3 1.1-1.1 2.3-2.5-.4L12 21.5 9.9 20l-2.5.4-1.1-2.3-2.3-1.1.4-2.5L2 12l2.4-1.5-.4-2.5 2.3-1.1 1.1-2.3 2.5.4L12 2.5Zm-1.2 12.1 4.9-4.9-1.4-1.4-3.5 3.5-1.6-1.6-1.4 1.4 3 3Z" />
+                                    </svg>
+                                    Verified
+                                </span>
+                            </div>
+                            <p class="farm-card-location">@(string.IsNullOrWhiteSpace(farm.Location) ? "Ghana" : farm.Location)</p>
+                            <p class="farm-card-summary">@farm.Summary</p>
+                            <div class="farm-card-tags">
+                                @if (farm.SellsEggs)
+                                {
+                                    <span class="farm-tag">Eggs</span>
+                                }
+                                @if (farm.SellsBirds)
+                                {
+                                    <span class="farm-tag birds">Birds</span>
+                                }
+                                @if (!farm.SellsEggs && !farm.SellsBirds)
+                                {
+                                    <span class="farm-tag muted">Coming soon</span>
+                                }
+                            </div>
+                            <div class="farm-card-footer">
+                                <span>@farm.ActiveListingCount offer@(farm.ActiveListingCount == 1 ? "" : "s")</span>
+                                <span class="farm-card-cta">View details →</span>
+                            </div>
+                        </div>
+                    </article>
+                }
+            </div>
+        </div>
+    </section>
+}
+
+<section class="section-band">
+    <div class="section">
+        <div class="trust-strip">
+            <ul class="trust-grid">
+                <li class="trust-item">
+                    <span class="trust-icon">1</span>
+                    <div>
+                        <strong>Verified sellers</strong>
+                        <span>Farms only list after super-admin approval.</span>
+                    </div>
+                </li>
+                <li class="trust-item">
+                    <span class="trust-icon">2</span>
+                    <div>
+                        <strong>Inquiry checkout</strong>
+                        <span>Ask about quantity and arrange purchase directly.</span>
+                    </div>
+                </li>
+                <li class="trust-item">
+                    <span class="trust-icon">3</span>
+                    <div>
+                        <strong>Live inventory</strong>
+                        <span>Offers come from real farm production and batches.</span>
+                    </div>
+                </li>
+                <li class="trust-item">
+                    <span class="trust-icon">4</span>
+                    <div>
+                        <strong>Farm-managed deals</strong>
+                        <span>Sellers confirm availability and fulfill offline.</span>
+                    </div>
+                </li>
+            </ul>
+        </div>
+    </div>
+</section>
+
+<section id="listings" class="section-band muted">
+    <div class="section">
+        <div class="section-head">
+            <div>
+                <h2>Latest from Akokɔ Papa</h2>
+                <p>Published eggs and birds from approved farms.</p>
+            </div>
+            <div class="filter-row compact">
+                <button type="button" class="chip @(_filter == "All" ? "active" : null)" @onclick='() => SetFilter("All")'>All</button>
+                <button type="button" class="chip @(_filter == "Eggs" ? "active" : null)" @onclick='() => SetFilter("Eggs")'>Eggs</button>
+                <button type="button" class="chip @(_filter == "Birds" ? "active" : null)" @onclick='() => SetFilter("Birds")'>Birds</button>
+                <a class="section-link" href="/catalog">Full catalog</a>
+            </div>
+        </div>
+
+        @if (_loading)
+        {
+            <div class="skeleton-grid" aria-hidden="true">
+                @for (var i = 0; i < 8; i++)
+                {
+                    <div class="skeleton-card"></div>
+                }
+            </div>
+        }
+        else if (FilteredListings.Count == 0)
+        {
+            <div class="empty-state">
+                <h3>No listings in this category yet</h3>
+                <p>Check back soon, or browse farm activities while inventory is being published.</p>
+                <a class="btn secondary" href="/activities">View activities</a>
+            </div>
+        }
+        else
+        {
+            <div class="listing-grid">
+                @foreach (var listing in FilteredListings)
+                {
+                    <article class="listing-card" @onclick="@(() => Navigation.NavigateTo($"/listings/{listing.Id}"))">
+                        <div class="listing-media @(listing.ListingType.Equals("Birds", StringComparison.OrdinalIgnoreCase) ? "birds" : null)"
+                             style="@ListingMediaStyle(listing)">
+                            <span class="tag">@listing.ListingType</span>
+                        </div>
+                        <div class="listing-body">
+                            <h3>@listing.Title</h3>
+                            <p class="listing-meta">@listing.FarmName</p>
+                            <p class="listing-meta">@ListingQuantityText.Available(listing.QuantityOffered, listing.UnitLabel)</p>
+                            <div class="listing-footer">
+                                <p class="price">@(listing.PriceText ?? "Ask for price")</p>
+                                <span class="listing-meta">Inquire →</span>
+                            </div>
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+<section class="section-band">
+    <div class="section how-grid">
+        <div>
+            <h2>How Akokɔ Papa works</h2>
+            <p class="section-intro">Simple for buyers. Controlled for farms.</p>
+        </div>
+        <ol class="how-steps">
+            <li>
+                <strong>Browse verified inventory</strong>
+                <span>Open listings for eggs or birds published by approved farms.</span>
+            </li>
+            <li>
+                <strong>Send an inquiry</strong>
+                <span>Share your quantity and contact details — no cart or payment required.</span>
+            </li>
+            <li>
+                <strong>Farm follows up</strong>
+                <span>The seller confirms availability and completes the deal offline.</span>
+            </li>
+        </ol>
+    </div>
+</section>
+
+<section class="section-band muted">
+    <div class="section">
+        <div class="promo-banner">
+            <div>
+                <h2>Farm owners: sell with Akokɔ Papa</h2>
+                <p>
+                    Apply once, get reviewed by a super admin, set your password, then publish eggs,
+                    bird batches, and farm updates from your dashboard.
+                </p>
+            </div>
+            <a class="btn primary" href="/apply">Register Your Farm</a>
+        </div>
+    </div>
+</section>
+
+@if (!_loading && _activities.Count > 0)
+{
+    <section class="section-band">
+        <div class="section">
+            <div class="section-head">
+                <div>
+                    <h2>From the farms</h2>
+                    <p>Recent activity posts from marketplace sellers.</p>
+                </div>
+                <a class="section-link" href="/activities">See all</a>
+            </div>
+            <div class="activity-list">
+                @foreach (var post in _activities.Take(4))
+                {
+                    <article class="activity-card">
+                        <p class="farm">@post.FarmName</p>
+                        <h3>@post.Title</h3>
+                        <p>@(post.Body.Length > 140 ? post.Body[..140] + "…" : post.Body)</p>
+                        <p class="muted mt">@post.LikeCount likes · @post.CommentCount comments · @(post.PublishedAt?.ToLocalTime().ToString("g"))</p>
+                    </article>
+                }
+            </div>
+        </div>
+    </section>
+}
+
+<section class="section-band muted">
+    <div class="section faq-grid">
+        <div>
+            <h2>Frequently asked</h2>
+            <p class="section-intro">Quick answers before you inquire or apply.</p>
+        </div>
+        <div class="faq-list">
+            <details open>
+                <summary>Do I create a buyer account?</summary>
+                <p>No. Browse publicly and send an inquiry with your contact details.</p>
+            </details>
+            <details>
+                <summary>Who can sell on Akokɔ Papa?</summary>
+                <p>Only farms approved by a super admin after registration review.</p>
+            </details>
+            <details>
+                <summary>How do payments work?</summary>
+                <p>Deals are inquiry-based. Farms arrange payment and delivery/pickup directly with you.</p>
+            </details>
+        </div>
+    </div>
+</section>
+
+@code {
+    private bool _loading = true;
+    private string _filter = "All";
+    private int _slideIndex;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+    private List<ListingDto> _listings = [];
+    private List<ActivityDto> _activities = [];
+    private List<FarmCardDto> _farms = [];
+    private ElementReference _farmCarousel;
+    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+
+    private readonly HeroSlide[] _slides =
+    [
+        new("Fresh eggs from trusted Ghanaian farms",
+            "Browse live egg inventory, send an inquiry, and buy from verified sellers on Akokɔ Papa.",
+            "/catalog", "Browse catalog", "/apply", "Register Your Farm",
+            "/hero-eggs.jpg"),
+        new("Bird batches ready for serious buyers",
+            "When farms mark batches for sale, they can push birds onto Akokɔ Papa for inquiry-based deals.",
+            "/catalog?type=Birds", "View bird offers", "/activities", "See farm updates",
+            "/hero-birds.jpg"),
+        new("Farm owners: get approved, then sell",
+            "Apply once. Super admins review you. Set your password and manage listings from the farm dashboard.",
+            "/apply", "Register Your Farm", "/catalog", "Explore catalog",
+            "/hero-farm.jpg")
+    ];
+
+    private IReadOnlyList<ListingDto> FilteredListings =>
+        _filter == "All"
+            ? _listings
+            : _listings.Where(x => x.ListingType.Equals(_filter, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private int _farmCount => _farms.Count;
+    private int _eggCount => _listings.Count(x => x.ListingType.Equals("Eggs", StringComparison.OrdinalIgnoreCase));
+    private int _birdCount => _listings.Count(x => x.ListingType.Equals("Birds", StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+        try
+        {
+            var listingsTask = client.GetFromJsonAsync<List<ListingDto>>("/api/marketplace/listings");
+            var activitiesTask = client.GetFromJsonAsync<List<ActivityDto>>("/api/marketplace/activities");
+            var farmsTask = client.GetFromJsonAsync<List<FarmCardDto>>("/api/marketplace/farms");
+            await Task.WhenAll(listingsTask, activitiesTask, farmsTask);
+            _listings = await listingsTask ?? [];
+            _activities = await activitiesTask ?? [];
+            _farms = await farmsTask ?? [];
+        }
+        catch
+        {
+            _listings = [];
+            _activities = [];
+            _farms = [];
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        _cts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(6));
+        _ = RunCarouselAsync(_cts.Token);
+    }
+
+    private async Task PrevFarm() => await ScrollFarmsAsync(-320);
+    private async Task NextFarm() => await ScrollFarmsAsync(320);
+
+    private async Task ScrollFarmsAsync(int delta)
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("marketplaceUi.scrollBy", _farmCarousel, delta);
+        }
+        catch
+        {
+            // Ignore if JS unavailable.
+        }
+    }
+
+    private static string FarmInitials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0) return "F";
+        if (parts.Length == 1) return parts[0][..Math.Min(2, parts[0].Length)].ToUpperInvariant();
+        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+
+    private static string FarmBannerTone(Guid id)
+        => $"tone-{Math.Abs(id.GetHashCode()) % 6}";
+
+    private async Task RunCarouselAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (_timer is not null && await _timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(() =>
+                {
+                    _slideIndex = (_slideIndex + 1) % _slides.Length;
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // disposed
+        }
+    }
+
+    private void NextSlide() => _slideIndex = (_slideIndex + 1) % _slides.Length;
+    private void PrevSlide() => _slideIndex = (_slideIndex - 1 + _slides.Length) % _slides.Length;
+    private void GoToSlide(int index) => _slideIndex = index;
+    private void SetFilter(string filter) => _filter = filter;
+
+    private void JumpToFilter(string filter)
+    {
+        Navigation.NavigateTo($"/catalog?type={Uri.EscapeDataString(filter)}");
+    }
+
+    private string? ListingMediaStyle(ListingDto listing)
+    {
+        if (string.IsNullOrWhiteSpace(listing.ImageUrl))
+        {
+            return null;
+        }
+
+        return $"background-image: linear-gradient(135deg, rgba(15, 23, 42, 0.18), rgba(15, 23, 42, 0.35)), url('{ResolveMediaUrl(listing.ImageUrl)}');";
+    }
+
+    private string ResolveMediaUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return url;
+        }
+
+        return $"{ApiBase}/{url.TrimStart('/')}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_cts is not null)
+        {
+            await _cts.CancelAsync();
+            _cts.Dispose();
+        }
+
+        _timer?.Dispose();
+    }
+
+    private sealed record HeroSlide(
+        string Title,
+        string Copy,
+        string PrimaryHref,
+        string PrimaryLabel,
+        string SecondaryHref,
+        string SecondaryLabel,
+        string ImageUrl);
+
+    private sealed record ListingDto(
+        Guid Id,
+        Guid CompanyId,
+        string FarmName,
+        string ListingType,
+        string Title,
+        string? Description,
+        decimal? QuantityOffered,
+        string UnitLabel,
+        decimal? PriceAmount,
+        string? PriceText,
+        string? ImageUrl,
+        DateTimeOffset? PublishedAt);
+
+    private sealed record ActivityDto(
+        Guid Id,
+        Guid CompanyId,
+        string FarmName,
+        string Title,
+        string Body,
+        string? MediaUrl,
+        DateTimeOffset? PublishedAt,
+        int LikeCount,
+        int CommentCount,
+        int ShareCount,
+        bool LikedByMe,
+        List<CommentDto>? Comments);
+
+    private sealed record CommentDto(
+        Guid Id,
+        string AuthorName,
+        Guid? AuthorCompanyId,
+        string Body,
+        DateTimeOffset CreatedAt);
+
+    private sealed record FarmCardDto(
+        Guid Id,
+        string Name,
+        string? Location,
+        string Summary,
+        bool SellsEggs,
+        bool SellsBirds,
+        int ActiveListingCount,
+        string? ContactPhone,
+        DateTimeOffset? JoinedAt);
+}
