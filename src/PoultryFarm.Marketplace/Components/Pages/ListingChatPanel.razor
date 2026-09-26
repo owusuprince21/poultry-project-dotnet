@@ -160,14 +160,20 @@
                         @onclick="@(() => _showEmojiPicker = !_showEmojiPicker)">
                     😊
                 </button>
-                <input @ref="_composerInput"
-                       value="@_draft"
-                       @oninput="OnDraftInput"
-                       @onkeydown="OnDraftKey"
-                       @key="_composerEpoch"
-                       placeholder="@(_replyTo is null ? "Type a message..." : "Write a reply...")"
-                       disabled="@_sending"
-                       aria-label="Message" />
+                <textarea @ref="_composerInput"
+                          class="chat-compose-input"
+                          rows="1"
+                          value="@_composerSeed"
+                          @oninput="OnDraftInput"
+                          @onkeydown="OnDraftKey"
+                          @key="_composerEpoch"
+                          placeholder="@(_replyTo is null ? "Type a message..." : "Write a reply...")"
+                          disabled="@_sending"
+                          autocomplete="on"
+                          autocorrect="on"
+                          spellcheck="true"
+                          enterkeyhint="enter"
+                          aria-label="Message"></textarea>
                 <button class="btn primary" type="submit" disabled="@(_sending || string.IsNullOrWhiteSpace(_draft))">
                     @(_sending ? "..." : "Send")
                 </button>
@@ -207,8 +213,10 @@
     private string _farmName = "Farm";
     private string _listingTitle = "Listing";
     private string _draft = string.Empty;
+    private string _composerSeed = string.Empty;
     private string _emojiSearch = string.Empty;
     private int _composerEpoch;
+    private int _sizedComposerEpoch = -1;
     private string? _error;
     private bool _ready;
     private bool _sending;
@@ -237,6 +245,21 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (_composerEpoch != _sizedComposerEpoch)
+        {
+            _sizedComposerEpoch = _composerEpoch;
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("poultryFarmChat.autosize", _composerInput);
+            }
+            catch (JSException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
         if (!firstRender)
         {
             if (_pendingScrollToBottom)
@@ -424,9 +447,8 @@
 
         var body = _draft.Trim();
         var replyToId = _replyTo?.Id;
-        _draft = string.Empty;
         _replyTo = null;
-        _composerEpoch++;
+        SetComposer(string.Empty);
         _sending = true;
         _error = null;
         _showEmojiPicker = false;
@@ -442,8 +464,7 @@
 
             if (!response.IsSuccessStatusCode)
             {
-                _draft = body;
-                _composerEpoch++;
+                SetComposer(body);
                 _error = await response.Content.ReadAsStringAsync();
                 return;
             }
@@ -459,8 +480,7 @@
         }
         catch (Exception ex)
         {
-            _draft = body;
-            _composerEpoch++;
+            SetComposer(body);
             _error = ex.Message;
         }
         finally
@@ -472,6 +492,13 @@
     private void OnDraftInput(ChangeEventArgs args)
     {
         _draft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private void SetComposer(string text)
+    {
+        _draft = text;
+        _composerSeed = text;
+        _composerEpoch++;
     }
 
     private async Task ReactAsync(ChatMessageRow message, string emoji)
@@ -685,7 +712,8 @@
 
     private void AddEmoji(string emoji)
     {
-        _draft = $"{_draft}{emoji}";
+        SetComposer($"{_draft}{emoji}");
+        _showEmojiPicker = false;
     }
 
     private void CloseEmojiPicker()

@@ -1,3 +1,24 @@
+window.poultryFarmChat = window.poultryFarmChat || {
+    autosize(element) {
+        if (!element) {
+            return;
+        }
+
+        const max = 132;
+        element.style.height = "auto";
+        const next = Math.min(element.scrollHeight, max);
+        element.style.height = `${Math.max(next, 44)}px`;
+        element.style.overflowY = element.scrollHeight > max ? "auto" : "hidden";
+    }
+};
+
+document.addEventListener("input", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLTextAreaElement && target.classList.contains("chat-compose-input")) {
+        window.poultryFarmChat.autosize(target);
+    }
+});
+
 window.marketplaceUi = {
     scrollToBottom(element) {
         if (!element) {

@@ -13,12 +13,15 @@ services:
       - docker.env
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      Apps__FarmBlazorBaseUrl: http://${PUBLIC_HOST}:5083
-      Apps__MarketplaceBaseUrl: http://${PUBLIC_HOST}:5084
-      Cors__AllowedOrigins__0: http://${PUBLIC_HOST}:5083
-      Cors__AllowedOrigins__1: http://${PUBLIC_HOST}:5084
-      Cors__AllowedOrigins__2: http://localhost:5083
-      Cors__AllowedOrigins__3: http://localhost:5084
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      Apps__FarmBlazorBaseUrl: ${FARM_PUBLIC_URL:-http://${PUBLIC_HOST}:5083}
+      Apps__MarketplaceBaseUrl: ${MARKET_PUBLIC_URL:-http://${PUBLIC_HOST}:5084}
+      Cors__AllowedOrigins__0: ${FARM_PUBLIC_URL:-http://${PUBLIC_HOST}:5083}
+      Cors__AllowedOrigins__1: ${MARKET_PUBLIC_URL:-http://${PUBLIC_HOST}:5084}
+      Cors__AllowedOrigins__2: http://${PUBLIC_HOST}:5083
+      Cors__AllowedOrigins__3: http://${PUBLIC_HOST}:5084
+      Cors__AllowedOrigins__4: http://localhost:5083
+      Cors__AllowedOrigins__5: http://localhost:5084
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -37,8 +40,12 @@ services:
       - "5083:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      Api__BaseUrl: http://${PUBLIC_HOST}:5100
-      Apps__MarketplaceBaseUrl: http://${PUBLIC_HOST}:5084
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      Api__BaseUrl: ${API_PUBLIC_URL:-http://${PUBLIC_HOST}:5100}
+      Apps__MarketplaceBaseUrl: ${MARKET_PUBLIC_URL:-http://${PUBLIC_HOST}:5084}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "${PUBLIC_HOST}:${TAILSCALE_IP:-host-gateway}"
     depends_on:
       - api
     restart: unless-stopped
@@ -55,8 +62,12 @@ services:
       - "5084:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      Api__BaseUrl: http://${PUBLIC_HOST}:5100
-      Apps__FarmBlazorBaseUrl: http://${PUBLIC_HOST}:5083
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      Api__BaseUrl: ${API_PUBLIC_URL:-http://${PUBLIC_HOST}:5100}
+      Apps__FarmBlazorBaseUrl: ${FARM_PUBLIC_URL:-http://${PUBLIC_HOST}:5083}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "${PUBLIC_HOST}:${TAILSCALE_IP:-host-gateway}"
     depends_on:
       - api
     restart: unless-stopped

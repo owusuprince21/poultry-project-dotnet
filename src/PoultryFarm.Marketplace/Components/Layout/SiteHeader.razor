@@ -1,6 +1,6 @@
 @rendermode InteractiveServer
 
-<header class="topbar">
+<header class="topbar @(_navOpen ? "is-nav-open" : null)">
     <a class="brand" href="/" @onclick="CloseNav">
         <img src="/logos/akoko-papa-logo-horizontal.svg" alt="Akokɔ Papa" class="brand-logo" />
     </a>

@@ -78,7 +78,7 @@ cp docker.env.example docker.env
 docker compose --env-file docker.env up -d --build
 ```
 
-Published ports:
+On the tailnet:
 
 ```text
 API          http://<PUBLIC_HOST>:5100
@@ -86,9 +86,22 @@ Dashboard    http://<PUBLIC_HOST>:5083
 Marketplace  http://<PUBLIC_HOST>:5084
 ```
 
-The API applies database migrations on startup and stores listing uploads in the `api-uploads` volume. `docker.env` stays on the server and is not committed.
+Public HTTPS, after Funnel is enabled on the server. Port 443 stays on the other app already using that hostname. The dashboard and API share port 10000.
 
-These URLs work for devices on the same Tailscale network. Opening them to the public internet also needs router port forwarding or Tailscale Funnel for ports 5100, 5083, and 5084.
+```text
+Marketplace  https://<tailnet-host>:8443
+Dashboard    https://<tailnet-host>:10000/dashboard
+API          https://<tailnet-host>:10000
+```
+
+Set `MARKET_PUBLIC_URL`, `FARM_PUBLIC_URL`, and `API_PUBLIC_URL` in `docker.env` to those addresses. `PUBLIC_HOST` is the Tailscale hostname with no scheme or port, and `TAILSCALE_IP` is the server's Tailscale address so the containers can reach the HTTPS API.
+
+```bash
+sudo tailscale funnel --bg --https=8443 http://127.0.0.1:5084
+sudo tailscale funnel --bg --https=10000 http://127.0.0.1:5100
+```
+
+The API applies database migrations on startup and stores listing uploads in the `api-uploads` volume. `docker.env` stays on the server and is not committed.
 
 ## Email (Resend)
 
