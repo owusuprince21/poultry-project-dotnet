@@ -131,6 +131,8 @@ builder.Services.AddHealthChecks().AddNpgSql(connectionString, name: "postgres")
 
 var app = builder.Build();
 
+await app.Services.ApplyMigrationsAsync();
+
 if (app.Environment.IsDevelopment())
 {
     await app.Services.SeedDevelopmentDataAsync();

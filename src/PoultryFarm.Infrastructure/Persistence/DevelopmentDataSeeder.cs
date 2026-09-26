@@ -11,6 +11,13 @@ namespace PoultryFarm.Infrastructure.Persistence;
 
 public static class DevelopmentDataSeeder
 {
+    public static async Task ApplyMigrationsAsync(this IServiceProvider services)
+    {
+        using var scope = services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await dbContext.Database.MigrateAsync();
+    }
+
     public static async Task SeedDevelopmentDataAsync(this IServiceProvider services)
     {
         using var scope = services.CreateScope();

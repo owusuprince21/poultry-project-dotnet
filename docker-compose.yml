@@ -1,0 +1,65 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        PROJECT: src/PoultryFarm.Api/PoultryFarm.Api.csproj
+        ASSEMBLY: PoultryFarm.Api.dll
+    image: poultry-farm-api
+    ports:
+      - "5100:8080"
+    env_file:
+      - docker.env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Apps__FarmBlazorBaseUrl: http://${PUBLIC_HOST}:5083
+      Apps__MarketplaceBaseUrl: http://${PUBLIC_HOST}:5084
+      Cors__AllowedOrigins__0: http://${PUBLIC_HOST}:5083
+      Cors__AllowedOrigins__1: http://${PUBLIC_HOST}:5084
+      Cors__AllowedOrigins__2: http://localhost:5083
+      Cors__AllowedOrigins__3: http://localhost:5084
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - api-uploads:/app/wwwroot/uploads
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        PROJECT: src/PoultryFarm.Blazor/PoultryFarm.Blazor.csproj
+        ASSEMBLY: PoultryFarm.Blazor.dll
+    image: poultry-farm-dashboard
+    ports:
+      - "5083:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Api__BaseUrl: http://${PUBLIC_HOST}:5100
+      Apps__MarketplaceBaseUrl: http://${PUBLIC_HOST}:5084
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  marketplace:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        PROJECT: src/PoultryFarm.Marketplace/PoultryFarm.Marketplace.csproj
+        ASSEMBLY: PoultryFarm.Marketplace.dll
+    image: poultry-farm-marketplace
+    ports:
+      - "5084:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Api__BaseUrl: http://${PUBLIC_HOST}:5100
+      Apps__FarmBlazorBaseUrl: http://${PUBLIC_HOST}:5083
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  api-uploads:

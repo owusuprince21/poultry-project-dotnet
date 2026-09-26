@@ -68,6 +68,28 @@ dotnet run --project src/PoultryFarm.Marketplace
 
 Restart the API after marketplace schema or controller changes so migrations and routes load. Guest marketplace chat needs the API plus Marketplace (and farm Blazor for farm replies).
 
+## Docker on the home server
+
+Images: `poultry-farm-api`, `poultry-farm-dashboard`, `poultry-farm-marketplace`.
+
+```bash
+cp docker.env.example docker.env
+# Set PUBLIC_HOST, the PostgreSQL password, and Jwt__SigningKey in docker.env
+docker compose --env-file docker.env up -d --build
+```
+
+Published ports:
+
+```text
+API          http://<PUBLIC_HOST>:5100
+Dashboard    http://<PUBLIC_HOST>:5083
+Marketplace  http://<PUBLIC_HOST>:5084
+```
+
+The API applies database migrations on startup and stores listing uploads in the `api-uploads` volume. `docker.env` stays on the server and is not committed.
+
+These URLs work for devices on the same Tailscale network. Opening them to the public internet also needs router port forwarding or Tailscale Funnel for ports 5100, 5083, and 5084.
+
 ## Email (Resend)
 
 Farm registration approval emails are sent with the [Resend](https://resend.com) API. Configure secrets (do not commit real keys):

@@ -1,0 +1,16 @@
+**/.git
+**/.github
+**/.vs
+**/.vscode
+**/.idea
+**/.DS_Store
+**/bin
+**/obj
+**/*.user
+**/appsettings.Development.json
+**/appsettings.Local.json
+**/.env
+**/.env.*
+**/docker.env
+*.md
+!README_DOTNET.md
