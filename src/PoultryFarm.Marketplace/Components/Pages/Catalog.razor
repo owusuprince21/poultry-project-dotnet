@@ -1,9 +1,11 @@
 @page "/catalog"
-@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@rendermode InteractiveServer
 @using System.Net.Http.Json
 @inject IHttpClientFactory HttpClientFactory
 @inject IConfiguration Configuration
 @inject NavigationManager Navigation
+@inject PersistentComponentState ApplicationState
+@implements IDisposable
 
 <section class="section-band catalog-hero">
     <div class="section">
@@ -65,7 +67,7 @@
             <div class="listing-grid">
                 @foreach (var listing in FilteredListings)
                 {
-                    <article class="listing-card" @onclick="@(() => Navigation.NavigateTo($"/listings/{listing.Id}"))">
+                    <a class="listing-card" href="@($"/listings/{listing.Id}")">
                         <div class="listing-media @(listing.ListingType.Equals("Birds", StringComparison.OrdinalIgnoreCase) ? "birds" : null)"
                              style="@ListingMediaStyle(listing)">
                             <span class="tag">@listing.ListingType</span>
@@ -79,7 +81,7 @@
                                 <span class="listing-meta">Inquire →</span>
                             </div>
                         </div>
-                    </article>
+                    </a>
                 }
             </div>
         }
@@ -90,6 +92,7 @@
     private bool _loading = true;
     private string _filter = "All";
     private List<ListingDto> _listings = [];
+    private PersistingComponentStateSubscription _persistSubscription;
     private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
 
     private IReadOnlyList<ListingDto> FilteredListings =>
@@ -102,7 +105,15 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _persistSubscription = ApplicationState.RegisterOnPersisting(PersistCatalogAsync);
         ApplyQueryFilter();
+        if (ApplicationState.TryTakeFromJson("catalog-listings", out List<ListingDto>? restored) && restored is not null)
+        {
+            _listings = restored;
+            _loading = false;
+            return;
+        }
+
         try
         {
             var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
@@ -117,6 +128,14 @@
             _loading = false;
         }
     }
+
+    private Task PersistCatalogAsync()
+    {
+        ApplicationState.PersistAsJson("catalog-listings", _listings);
+        return Task.CompletedTask;
+    }
+
+    public void Dispose() => _persistSubscription.Dispose();
 
     private void ApplyQueryFilter()
     {
@@ -137,7 +156,7 @@
     {
         _filter = filter;
         var href = filter == "All" ? "/catalog" : $"/catalog?type={Uri.EscapeDataString(filter)}";
-        Navigation.NavigateTo(href, replace: true);
+        Navigation.NavigateTo(href, forceLoad: true, replace: true);
     }
 
     private string? ListingMediaStyle(ListingDto listing)

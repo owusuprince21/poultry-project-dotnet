@@ -1,8 +1,10 @@
 @page "/farms"
-@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@rendermode InteractiveServer
 @using System.Net.Http.Json
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Navigation
+@inject PersistentComponentState ApplicationState
+@implements IDisposable
 
 <section class="section-band farms-page-hero">
     <div class="section">
@@ -38,7 +40,7 @@
             <div class="farm-grid">
                 @foreach (var farm in _farms)
                 {
-                    <article class="farm-card" @onclick="@(() => Navigation.NavigateTo($"/farms/{farm.Id}"))">
+                    <a class="farm-card" href="@($"/farms/{farm.Id}")">
                         <div class="farm-card-banner @FarmBannerTone(farm.Id)" aria-hidden="true">
                             <span class="farm-card-initials">@Initials(farm.Name)</span>
                         </div>
@@ -73,7 +75,7 @@
                                 <span class="farm-card-cta">View details →</span>
                             </div>
                         </div>
-                    </article>
+                    </a>
                 }
             </div>
         }
@@ -83,9 +85,18 @@
 @code {
     private bool _loading = true;
     private List<FarmCardDto> _farms = [];
+    private PersistingComponentStateSubscription _persistSubscription;
 
     protected override async Task OnInitializedAsync()
     {
+        _persistSubscription = ApplicationState.RegisterOnPersisting(PersistFarmsAsync);
+        if (ApplicationState.TryTakeFromJson("farms-list", out List<FarmCardDto>? restored) && restored is not null)
+        {
+            _farms = restored;
+            _loading = false;
+            return;
+        }
+
         try
         {
             var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
@@ -100,6 +111,14 @@
             _loading = false;
         }
     }
+
+    private Task PersistFarmsAsync()
+    {
+        ApplicationState.PersistAsJson("farms-list", _farms);
+        return Task.CompletedTask;
+    }
+
+    public void Dispose() => _persistSubscription.Dispose();
 
     private static string Initials(string name)
     {

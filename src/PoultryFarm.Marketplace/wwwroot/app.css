@@ -525,6 +525,12 @@ main { flex: 1; }
     .listing-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
+a.listing-card,
+a.farm-card {
+    color: inherit;
+    text-decoration: none;
+}
+
 .listing-card {
     display: flex;
     flex-direction: column;

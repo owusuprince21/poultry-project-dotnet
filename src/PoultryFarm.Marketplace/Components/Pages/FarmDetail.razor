@@ -1,9 +1,11 @@
 @page "/farms/{Id:guid}"
-@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@rendermode InteractiveServer
 @using System.Net.Http.Json
 @inject IHttpClientFactory HttpClientFactory
 @inject IConfiguration Configuration
 @inject NavigationManager Navigation
+@inject PersistentComponentState ApplicationState
+@implements IDisposable
 
 <section class="section-band">
     <div class="section">
@@ -119,7 +121,7 @@
                         <div class="listing-grid">
                             @foreach (var listing in _farm.Listings)
                             {
-                                <article class="listing-card" @onclick="@(() => Navigation.NavigateTo($"/listings/{listing.Id}"))">
+                                <a class="listing-card" href="@($"/listings/{listing.Id}")">
                                     <div class="listing-media @(listing.ListingType.Equals("Birds", StringComparison.OrdinalIgnoreCase) ? "birds" : null)"
                                          style="@ListingMediaStyle(listing)">
                                         <span class="tag">@listing.ListingType</span>
@@ -132,7 +134,7 @@
                                             <span class="listing-meta">Inquire →</span>
                                         </div>
                                     </div>
-                                </article>
+                                </a>
                             }
                         </div>
                     }
@@ -147,11 +149,23 @@
 
     private bool _loading = true;
     private FarmDetailDto? _farm;
+    private PersistingComponentStateSubscription _persistSubscription;
     private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+
+    protected override void OnInitialized()
+    {
+        _persistSubscription = ApplicationState.RegisterOnPersisting(PersistFarmAsync);
+    }
 
     protected override async Task OnParametersSetAsync()
     {
-        _loading = true;
+        if (ApplicationState.TryTakeFromJson($"farm-{Id:N}", out FarmDetailDto? restored))
+        {
+            _farm = restored;
+            _loading = false;
+            return;
+        }
+
         try
         {
             var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
@@ -174,6 +188,14 @@
             _loading = false;
         }
     }
+
+    private Task PersistFarmAsync()
+    {
+        ApplicationState.PersistAsJson($"farm-{Id:N}", _farm);
+        return Task.CompletedTask;
+    }
+
+    public void Dispose() => _persistSubscription.Dispose();
 
     private string ListingMediaStyle(ListingDto listing)
     {
