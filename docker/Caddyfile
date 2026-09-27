@@ -1,29 +1,13 @@
 :80 {
-	handle /api/* {
+	@api path_regexp apipath ^/(api|hubs|uploads|health)(/|$)
+	handle @api {
 		reverse_proxy api:8080 {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-Host {http.request.host}
 		}
-	}
-	handle /hubs/* {
-		reverse_proxy api:8080 {
-			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-Host {http.request.host}
-		}
-	}
-	handle /uploads/* {
-		reverse_proxy api:8080 {
-			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-Host {http.request.host}
-		}
-	}
-	handle /health {
-		reverse_proxy api:8080
 	}
 	handle {
 		reverse_proxy dashboard:8080 {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-Host {http.request.host}
 		}
 	}
 }
