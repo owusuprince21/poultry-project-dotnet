@@ -23,6 +23,7 @@ services:
       Cors__AllowedOrigins__4: http://localhost:5083
       Cors__AllowedOrigins__5: http://localhost:5084
       DataProtection__KeysPath: /var/dpkeys
+      AI__Provider: Gemini
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
