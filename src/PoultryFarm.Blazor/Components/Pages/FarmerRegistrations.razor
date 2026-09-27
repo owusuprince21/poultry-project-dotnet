@@ -99,7 +99,6 @@ else
                     @KycRow("Email", _preview.Email)
                     @KycRow("Phone", _preview.Phone)
                     @KycRow("Location", string.IsNullOrWhiteSpace(_preview.Location) ? "—" : _preview.Location)
-                    @KycRow("Preferred username", string.IsNullOrWhiteSpace(_preview.RequestedUsername) ? "—" : _preview.RequestedUsername)
                     @KycRow("Submitted", _preview.CreatedAt.ToLocalTime().ToString("f"))
                     @KycRow("Reviewed", _preview.ReviewedAt?.ToLocalTime().ToString("f") ?? "—")
                     @KycRow("Review notes", string.IsNullOrWhiteSpace(_preview.ReviewNotes) ? "—" : _preview.ReviewNotes)

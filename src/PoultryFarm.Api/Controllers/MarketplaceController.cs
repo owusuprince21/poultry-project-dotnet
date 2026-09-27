@@ -82,9 +82,7 @@ public sealed class MarketplaceController(
             Phone = request.Phone.Trim(),
             Location = request.Location?.Trim(),
             Notes = request.Notes?.Trim(),
-            RequestedUsername = string.IsNullOrWhiteSpace(request.RequestedUsername)
-                ? null
-                : request.RequestedUsername.Trim().ToLowerInvariant(),
+            RequestedUsername = null,
             Status = FarmerRegistrationStatus.Pending
         };
 
@@ -184,19 +182,10 @@ public sealed class MarketplaceController(
             return BadRequest(new { detail = "Only pending registrations can be approved." });
         }
 
-        var username = string.IsNullOrWhiteSpace(request.Username)
-            ? registration.RequestedUsername
-            : request.Username.Trim().ToLowerInvariant();
-
-        if (string.IsNullOrWhiteSpace(username))
-        {
-            username = GenerateUsername(registration.ContactFirstName, registration.FarmName);
-        }
-
-        if (await userManager.FindByNameAsync(username) is not null)
-        {
-            return BadRequest(new { username = "Username is already taken." });
-        }
+        var username = await CreateUniqueUsernameAsync(
+            registration.ContactFirstName,
+            registration.ContactLastName,
+            cancellationToken);
 
         var company = new Company
         {
@@ -2071,19 +2060,29 @@ public sealed class MarketplaceController(
         return new string(Enumerable.Range(0, 10).Select(_ => chars[Random.Shared.Next(chars.Length)]).ToArray());
     }
 
-    private static string GenerateUsername(string firstName, string farmName)
+    private async Task<string> CreateUniqueUsernameAsync(string firstName, string lastName, CancellationToken cancellationToken)
     {
-        var baseName = new string($"{firstName}{farmName}"
-            .Where(char.IsLetterOrDigit)
-            .Take(12)
-            .ToArray())
-            .ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(baseName))
+        var stem = new string($"{firstName}{lastName}".Where(char.IsLetter).ToArray()).ToLowerInvariant();
+        if (stem.Length > 16)
         {
-            baseName = "farmer";
+            stem = stem[..16];
         }
 
-        return $"{baseName}{Random.Shared.Next(100, 999)}";
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            stem = "farm";
+        }
+
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            var candidate = $"{stem}{Random.Shared.Next(10000, 100000)}";
+            if (await userManager.FindByNameAsync(candidate) is null)
+            {
+                return candidate;
+            }
+        }
+
+        return $"{stem}{Guid.NewGuid().ToString("N")[..8]}";
     }
 
     private static string GenerateTemporaryPassword() =>

@@ -35,7 +35,9 @@
             </MudText>
 
             <MudText Typo="Typo.body2" Color="Color.Primary">
-                Use your farm account to continue to the RBAC dashboard.
+                @(_usernameReady
+                    ? "Your username is filled in. Enter the password you just created."
+                    : "Use your farm account to continue to the RBAC dashboard.")
             </MudText>
 
             <MudForm Class="login-form">
@@ -93,6 +95,7 @@
 
 @code {
     private string _username = string.Empty;
+    private bool _usernameReady;
     private string _password = string.Empty;
     private bool _busy;
     private bool _showPassword;
@@ -111,6 +114,17 @@
     private void TogglePasswordVisibility()
     {
         _showPassword = !_showPassword;
+    }
+
+    protected override void OnInitialized()
+    {
+        var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("username", out var username) && !string.IsNullOrWhiteSpace(username))
+        {
+            _username = username.ToString().Trim();
+            _usernameReady = true;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

@@ -56,10 +56,6 @@
                     <input @bind="_location" autocomplete="address-level2" />
                 </label>
                 <label class="field">
-                    <span>Preferred username</span>
-                    <input @bind="_username" autocomplete="username" />
-                </label>
-                <label class="field">
                     <span>Notes</span>
                     <textarea @bind="_notes" rows="3" placeholder="Bird types, capacity, or anything reviewers should know"></textarea>
                 </label>
@@ -86,7 +82,6 @@
     private string _email = string.Empty;
     private string _phone = string.Empty;
     private string _location = string.Empty;
-    private string _username = string.Empty;
     private string _notes = string.Empty;
 
     private async Task SubmitAsync()
@@ -103,8 +98,7 @@
                 email = _email,
                 phone = _phone,
                 location = _location,
-                notes = _notes,
-                requestedUsername = string.IsNullOrWhiteSpace(_username) ? null : _username
+                notes = _notes
             });
 
             if (!response.IsSuccessStatusCode)
