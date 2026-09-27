@@ -2968,9 +2968,20 @@ a.farm-card {
         min-height: auto;
     }
 
-    .listing-chat-pane {
-        height: min(70vh, 34rem);
-        max-height: min(70vh, 34rem);
+    .listing-chat-pane:not(.is-chat-open) {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+    }
+
+    .listing-chat-pane:not(.is-chat-open) .listing-chat-pane-body,
+    .listing-chat-pane:not(.is-chat-open) .chat-start,
+    .listing-chat-pane:not(.is-chat-open) .chat-leave {
+        flex: none;
+        height: auto;
+        max-height: none;
+        min-height: 0;
+        overflow: visible;
     }
 
     .listing-product-body h1 {
