@@ -98,8 +98,10 @@ Set `MARKET_PUBLIC_URL`, `FARM_PUBLIC_URL`, and `API_PUBLIC_URL` in `docker.env`
 
 ```bash
 sudo tailscale funnel --bg --https=8443 http://127.0.0.1:5084
-sudo tailscale funnel --bg --https=10000 http://127.0.0.1:5100
+sudo tailscale funnel --bg --https=10000 http://127.0.0.1:9080
 ```
+
+Port 10000 is the Caddy proxy. It serves the farm dashboard, and it sends `/api`, `/hubs`, `/uploads`, and `/health` to the API. Password setup links use `FARM_PUBLIC_URL`.
 
 The API applies database migrations on startup and stores listing uploads in the `api-uploads` volume. `docker.env` stays on the server and is not committed.
 
