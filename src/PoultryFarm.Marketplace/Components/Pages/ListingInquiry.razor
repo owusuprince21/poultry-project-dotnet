@@ -1,0 +1,215 @@
+@using System.Net.Http.Json
+@using PoultryFarm.Marketplace.Services
+@rendermode InteractiveServer
+
+@inject IHttpClientFactory HttpClientFactory
+@inject GuestSession GuestSession
+
+<section class="listing-chat-pane">
+    <header class="listing-chat-pane-header">
+        <div>
+            <h2>Message the farm</h2>
+            <p>@FarmName will reply here to arrange fulfillment.</p>
+        </div>
+        @if (_chatOpen)
+        {
+            <span class="chat-live-pill">Live</span>
+        }
+    </header>
+
+    <div class="listing-chat-pane-body">
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <p class="notice">@_message</p>
+        }
+
+        @if (!_chatOpen)
+        {
+            <div class="chat-start">
+                <p class="chat-start-lead">Share your contact details to start a live chat about this listing.</p>
+                <div class="chat-start-grid">
+                    <label>
+                        <span>Name</span>
+                        <input @bind="_buyerName" placeholder="Your full name" autocomplete="name" />
+                    </label>
+                    <label>
+                        <span>Email</span>
+                        <input @bind="_buyerEmail" type="email" placeholder="you@email.com" autocomplete="email" />
+                    </label>
+                    <label>
+                        <span>Phone</span>
+                        <input @bind="_buyerPhone" type="tel" placeholder="Phone number" autocomplete="tel" />
+                    </label>
+                    <label>
+                        <span>Quantity (optional)</span>
+                        <input @bind="_qty" placeholder="e.g. 5 crates" />
+                    </label>
+                    <label class="full">
+                        <span>First message (optional)</span>
+                        <textarea @bind="_inquiryMessage" placeholder="Tell the farm what you need..." rows="3"></textarea>
+                    </label>
+                </div>
+                <div class="chat-start-actions">
+                    <button class="btn primary" disabled="@_saving" @onclick="StartChatAsync">
+                        @(_saving ? "Starting..." : "Start chat")
+                    </button>
+                    <button class="btn secondary" disabled="@_saving" @onclick="LeaveMessageAsync">
+                        Leave a message instead
+                    </button>
+                </div>
+            </div>
+        }
+        else
+        {
+            <ListingChatPanel ListingId="ListingId"
+                              ListingTitle="@ListingTitle"
+                              FarmName="@FarmName"
+                              InitialMessage="@_startedMessage" />
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter] public Guid ListingId { get; set; }
+    [Parameter] public string ListingTitle { get; set; } = "Listing";
+    [Parameter] public string FarmName { get; set; } = "Farm";
+
+    private bool _saving;
+    private bool _chatOpen;
+    private string _buyerName = string.Empty;
+    private string _buyerEmail = string.Empty;
+    private string _buyerPhone = string.Empty;
+    private string _qty = string.Empty;
+    private string _inquiryMessage = string.Empty;
+    private string? _startedMessage;
+    private string? _message;
+    private bool _guestLoaded;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _guestLoaded)
+        {
+            return;
+        }
+
+        _guestLoaded = true;
+        try
+        {
+            await GuestSession.LoadAsync();
+            if (!GuestSession.IsAuthenticated)
+            {
+                return;
+            }
+
+            _buyerName = GuestSession.DisplayName ?? string.Empty;
+            _buyerEmail = GuestSession.Email ?? string.Empty;
+            _buyerPhone = GuestSession.Phone ?? string.Empty;
+            StateHasChanged();
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task StartChatAsync()
+    {
+        _saving = true;
+        _message = null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_buyerName))
+            {
+                _message = "Enter your name to start chatting.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_buyerEmail) && string.IsNullOrWhiteSpace(_buyerPhone))
+            {
+                _message = "Provide an email or phone number.";
+                return;
+            }
+
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            var response = await client.PostAsJsonAsync("/api/marketplace/guest-session", new
+            {
+                name = _buyerName,
+                email = _buyerEmail,
+                phone = _buyerPhone
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _message = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            var session = await response.Content.ReadFromJsonAsync<GuestSessionDto>();
+            if (session is null || string.IsNullOrWhiteSpace(session.Token))
+            {
+                _message = "Could not create guest session.";
+                return;
+            }
+
+            await GuestSession.SignInAsync(session.Token, session.UserId, session.DisplayName, session.Email, session.Phone);
+
+            var first = _inquiryMessage.Trim();
+            if (!string.IsNullOrWhiteSpace(_qty))
+            {
+                first = string.IsNullOrWhiteSpace(first)
+                    ? $"Hi, I'm interested in {_qty}."
+                    : $"{first}\nQuantity: {_qty}";
+            }
+
+            _startedMessage = string.IsNullOrWhiteSpace(first) ? null : first;
+            _chatOpen = true;
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task LeaveMessageAsync()
+    {
+        _saving = true;
+        _message = null;
+        try
+        {
+            decimal? qty = decimal.TryParse(_qty, out var parsed) ? parsed : null;
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            var response = await client.PostAsJsonAsync("/api/marketplace/inquiries", new
+            {
+                listingId = ListingId,
+                buyerName = _buyerName,
+                buyerEmail = _buyerEmail,
+                buyerPhone = _buyerPhone,
+                message = string.IsNullOrWhiteSpace(_inquiryMessage) ? "Please contact me about this listing." : _inquiryMessage,
+                quantityRequested = qty
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _message = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _message = "Message sent. The farm will contact you.";
+            _inquiryMessage = string.Empty;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private sealed record GuestSessionDto(
+        string Token,
+        Guid UserId,
+        string DisplayName,
+        string? Email,
+        string? Phone);
+}
