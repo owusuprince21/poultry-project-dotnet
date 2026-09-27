@@ -18,7 +18,7 @@
 {
     <PageLoader Message="Loading inquiries..." />
 }
-else if (!AuthSession.IsFarmAdmin && !AuthSession.IsSystemAdmin && !AuthSession.CanAccessPage("marketplace"))
+else if (!AuthSession.IsFarmAdmin && !AuthSession.IsSystemAdmin && !AuthSession.IsWorker)
 {
     <ModulePageShell Title="Marketplace Inquiries" Subtitle="Buyer interest from the public marketplace.">
         <ModuleStatusPanel Title="Restricted" Description="Farm admins and workers with marketplace access can manage inquiries." Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" />
@@ -76,7 +76,7 @@ else
         await AuthSession.LoadAsync();
         if (!AuthSession.IsAuthenticated) { Navigation.NavigateTo("/", replace: true); return; }
         if (AuthSession.MustChangePassword) { Navigation.NavigateTo("/force-password-change", replace: true); return; }
-        if (AuthSession.IsFarmAdmin || AuthSession.IsSystemAdmin) await LoadAsync();
+        if (AuthSession.IsFarmAdmin || AuthSession.IsSystemAdmin || AuthSession.IsWorker) await LoadAsync();
         _loaded = true;
         await InvokeAsync(StateHasChanged);
     }

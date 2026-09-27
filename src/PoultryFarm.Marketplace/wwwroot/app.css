@@ -25,6 +25,12 @@ html, body {
     overflow-x: hidden;
 }
 
+h1:focus,
+h2:focus,
+h3:focus {
+    outline: none;
+}
+
 img, video, canvas, svg {
     max-width: 100%;
     height: auto;
@@ -2385,6 +2391,54 @@ a.farm-card {
     padding-left: 0.25rem;
 }
 
+.listing-chat-pane-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.chat-pane-close {
+    border: 1px solid var(--border);
+    background: #fff;
+    border-radius: 999px;
+    padding: 0.4rem 0.8rem;
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.chat-leave {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    padding: 1.25rem;
+}
+
+.chat-leave-sent {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.chat-leave-sent li {
+    padding: 0.75rem 0.85rem;
+    border-radius: 12px;
+    background: var(--primary-soft);
+    border: 1px solid var(--primary-border);
+}
+
+.chat-leave-sent strong {
+    display: block;
+    margin-bottom: 0.2rem;
+}
+
 @media (max-width: 920px) {
     .listing-workspace-grid {
         grid-template-columns: 1fr;
@@ -2395,8 +2449,32 @@ a.farm-card {
     }
 
     .listing-chat-pane {
-        height: min(560px, calc(100vh - 7rem));
-        max-height: min(560px, calc(100vh - 7rem));
+        height: auto;
+        max-height: none;
+    }
+
+    .chat-start,
+    .chat-leave {
+        height: auto;
+        overflow: visible;
+    }
+
+    .listing-chat-pane.is-chat-open {
+        position: fixed;
+        inset: 0;
+        z-index: 220;
+        width: 100%;
+        height: 100dvh;
+        max-height: 100dvh;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .listing-chat-pane.is-chat-open .listing-chat-pane-body,
+    .listing-chat-pane.is-chat-open .listing-chat {
+        flex: 1;
+        min-height: 0;
+        height: 100%;
     }
 }
 

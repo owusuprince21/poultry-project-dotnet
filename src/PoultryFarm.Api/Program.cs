@@ -44,6 +44,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 builder.Services.AddScoped<IActivityNotifier, SignalRActivityNotifier>();
+builder.Services.AddScoped<MarketplaceChatFanout>();
 builder.Services.AddScoped<JwtTokenIssuer>();
 builder.Services.AddScoped<ControllerAudit>();
 builder.Services.AddHostedService<MedicationReminderService>();

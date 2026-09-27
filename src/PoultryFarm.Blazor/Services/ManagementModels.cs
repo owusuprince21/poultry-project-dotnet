@@ -188,7 +188,8 @@ public sealed record TeamChatMessage(
     DateTimeOffset? EditedAt = null,
     bool CanEdit = false,
     bool CanDelete = false,
-    IReadOnlyCollection<ChatReaction>? Reactions = null);
+    IReadOnlyCollection<ChatReaction>? Reactions = null,
+    Guid? MarketplaceBuyerUserId = null);
 
 public sealed record ChatReaction(
     string Emoji,

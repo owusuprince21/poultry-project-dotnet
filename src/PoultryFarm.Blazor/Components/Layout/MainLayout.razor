@@ -440,12 +440,13 @@
                     return;
                 }
 
-                if (!_chatOpen || _activeChatContactId != message.SenderUserId)
+                var threadContactId = message.MarketplaceBuyerUserId ?? message.SenderUserId;
+                if (!_chatOpen || _activeChatContactId != threadContactId)
                 {
                     _chatUnreadCount++;
                 }
 
-                if (!_chatOpen || _activeChatContactId != message.SenderUserId)
+                if (!_chatOpen || _activeChatContactId != threadContactId)
                 {
                     Snackbar.Add("New chat message received.", Severity.Info, options =>
                     {

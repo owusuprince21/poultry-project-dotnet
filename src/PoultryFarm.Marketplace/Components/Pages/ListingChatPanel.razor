@@ -386,7 +386,7 @@
 
         _hubConnection.On<TypingDto>("chat.typing", signal =>
         {
-            if (_farmContactId is null || signal.SenderUserId != _farmContactId)
+            if (GuestSession.UserId is Guid selfId && signal.SenderUserId == selfId)
             {
                 return;
             }

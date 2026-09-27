@@ -22,7 +22,8 @@ public sealed class ChatController(
     ApplicationDbContext dbContext,
     UserManager<ApplicationUser> userManager,
     IHubContext<ActivityHub> hubContext,
-    IChatMessageProtector messageProtector) : ControllerBase
+    IChatMessageProtector messageProtector,
+    MarketplaceChatFanout chatFanout) : ControllerBase
 {
     private static readonly TimeSpan EditWindow = TimeSpan.FromMinutes(10);
 
@@ -64,6 +65,17 @@ public sealed class ChatController(
             .Select(x => new { ContactId = x.Key, Count = x.Count() })
             .ToDictionaryAsync(x => x.ContactId, x => x.Count, cancellationToken);
 
+        var notificationUnread = await dbContext.AppNotifications
+            .AsNoTracking()
+            .Where(x => x.RecipientUserId == currentUserId && x.ReadAt == null && x.Kind == "chat" && x.TargetId != null)
+            .GroupBy(x => x.TargetId!.Value)
+            .Select(x => new { ContactId = x.Key, Count = x.Count() })
+            .ToListAsync(cancellationToken);
+        foreach (var row in notificationUnread)
+        {
+            unreadCounts[row.ContactId] = Math.Max(unreadCounts.GetValueOrDefault(row.ContactId), row.Count);
+        }
+
         var latestMessages = await dbContext.ChatMessages
             .AsNoTracking()
             .Where(x =>
@@ -76,6 +88,7 @@ public sealed class ChatController(
         var latestByContact = latestMessages.ToDictionary(
             x => x.SenderUserId == currentUserId ? x.RecipientUserId : x.SenderUserId,
             x => x);
+        var sharedPreview = await LoadSharedPreviewAsync(currentUser, cancellationToken);
 
         var listingTitlesQuery = dbContext.MarketplaceConversations
             .AsNoTracking()
@@ -155,6 +168,12 @@ public sealed class ChatController(
 
                 var canReply = !(isPlatformAdmin && x.FarmRole == UserRole.MarketplaceBuyer);
 
+                latestByContact.TryGetValue(x.Id, out var directPreview);
+                sharedPreview.TryGetValue(x.Id, out var sharedLatest);
+                var previewMessage = sharedLatest is not null && (directPreview is null || sharedLatest.SentAt >= directPreview.SentAt)
+                    ? sharedLatest
+                    : directPreview;
+
                 return new ChatContactDto(
                     x.Id,
                     x.UserName ?? string.Empty,
@@ -166,8 +185,8 @@ public sealed class ChatController(
                     x.LastSeenAt,
                     x.LastSeenAt.HasValue && x.LastSeenAt.Value >= onlineThreshold,
                     unreadCounts.GetValueOrDefault(x.Id),
-                    latestByContact.TryGetValue(x.Id, out var previewMessage) ? messageProtector.Unprotect(previewMessage.Body) : null,
-                    latestByContact.TryGetValue(x.Id, out var latestMessage) ? latestMessage.SentAt : null,
+                    previewMessage is null ? null : messageProtector.Unprotect(previewMessage.Body),
+                    previewMessage?.SentAt,
                     listingTitle,
                     x.Email,
                     x.PhoneNumber,
@@ -232,6 +251,9 @@ public sealed class ChatController(
         }
 
         var currentUserId = currentUser.Id;
+        var sharedConversationIds = contactUser is null
+            ? []
+            : await SharedMarketplaceConversationIdsAsync(currentUser, contactUser, cancellationToken);
         List<ChatMessage> chatMessages;
         if (isBuyerReadOnlyOversight)
         {
@@ -241,14 +263,11 @@ public sealed class ChatController(
                 .Select(c => c.Id)
                 .ToListAsync(cancellationToken);
 
-            chatMessages = await dbContext.ChatMessages
-                .AsNoTracking()
-                .Include(x => x.ReplyToMessage)
-                .Include(x => x.Reactions)
-                .Where(x => x.MarketplaceConversationId != null && conversationIds.Contains(x.MarketplaceConversationId.Value))
-                .OrderBy(x => x.SentAt)
-                .Take(300)
-                .ToListAsync(cancellationToken);
+            chatMessages = await LoadConversationMessagesAsync(conversationIds, cancellationToken);
+        }
+        else if (sharedConversationIds.Count > 0)
+        {
+            chatMessages = await LoadConversationMessagesAsync(sharedConversationIds, cancellationToken);
         }
         else
         {
@@ -371,22 +390,26 @@ public sealed class ChatController(
             message.CompanyId ??= conversation.CompanyId;
         }
 
-        var notification = new AppNotification
-        {
-            RecipientUserId = recipient.Id,
-            CompanyId = message.CompanyId,
-            ActorUserId = currentUser.Id,
-            ActorName = DisplayName(currentUser),
-            Title = "New chat message",
-            Detail = "New encrypted chat message",
-            Kind = "chat",
-            TargetType = "chat",
-            TargetId = currentUser.Id,
-            SentAt = message.SentAt
-        };
-
         dbContext.ChatMessages.Add(message);
-        dbContext.AppNotifications.Add(notification);
+        AppNotification? notification = null;
+        if (conversation is null)
+        {
+            notification = new AppNotification
+            {
+                RecipientUserId = recipient.Id,
+                CompanyId = message.CompanyId,
+                ActorUserId = currentUser.Id,
+                ActorName = DisplayName(currentUser),
+                Title = "New chat message",
+                Detail = "New encrypted chat message",
+                Kind = "chat",
+                TargetType = "chat",
+                TargetId = currentUser.Id,
+                SentAt = message.SentAt
+            };
+            dbContext.AppNotifications.Add(notification);
+        }
+
         await TouchAsync(currentUser, cancellationToken, save: false);
         await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -396,25 +419,44 @@ public sealed class ChatController(
             DisplayName(currentUser),
             DisplayName(recipient),
             replyToMessage is null ? null : await DisplayNameForUserAsync(replyToMessage.SenderUserId, cancellationToken),
-            replyToMessage is null ? null : messageProtector.Unprotect(replyToMessage.Body));
-        var recipientDto = senderDto with { IsMine = false, CanEdit = false, CanDelete = false };
+            replyToMessage is null ? null : messageProtector.Unprotect(replyToMessage.Body),
+            conversation?.BuyerUserId);
 
+        if (conversation is not null)
+        {
+            await chatFanout.PublishMessageAsync(
+                "chat.message",
+                senderDto,
+                conversation.CompanyId,
+                conversation.BuyerUserId,
+                currentUser.Id,
+                "New chat message",
+                DisplayName(currentUser),
+                createNotifications: true,
+                cancellationToken);
+            return Ok(senderDto);
+        }
+
+        var recipientDto = senderDto with { IsMine = false, CanEdit = false, CanDelete = false };
         await hubContext.Clients.User(currentUser.Id.ToString())
             .SendAsync("chat.message", senderDto, cancellationToken);
         await hubContext.Clients.User(recipient.Id.ToString())
             .SendAsync("chat.message", recipientDto, cancellationToken);
-        await hubContext.Clients.User(recipient.Id.ToString())
-            .SendAsync("activity.received", new
-            {
-                id = notification.Id,
-                notification.Title,
-                detail = notification.Detail,
-                actorName = notification.ActorName,
-                notification.Kind,
-                notification.TargetType,
-                notification.TargetId,
-                at = notification.SentAt
-            }, cancellationToken);
+        if (notification is not null)
+        {
+            await hubContext.Clients.User(recipient.Id.ToString())
+                .SendAsync("activity.received", new
+                {
+                    id = notification.Id,
+                    notification.Title,
+                    detail = notification.Detail,
+                    actorName = notification.ActorName,
+                    notification.Kind,
+                    notification.TargetType,
+                    notification.TargetId,
+                    at = notification.SentAt
+                }, cancellationToken);
+        }
 
         return Ok(senderDto);
     }
@@ -462,6 +504,26 @@ public sealed class ChatController(
             message.ReplyToMessage is null ? null : messageProtector.Unprotect(message.ReplyToMessage.Body));
         var recipientDto = dto with { IsMine = false, CanEdit = false, CanDelete = false };
 
+        if (message.MarketplaceConversationId is Guid updatedConversationId)
+        {
+            var updatedConversation = await dbContext.MarketplaceConversations.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == updatedConversationId, cancellationToken);
+            if (updatedConversation is not null)
+            {
+                await chatFanout.PublishMessageAsync(
+                    "chat.message.updated",
+                    dto,
+                    updatedConversation.CompanyId,
+                    updatedConversation.BuyerUserId,
+                    currentUser.Id,
+                    "Chat message updated",
+                    DisplayName(currentUser),
+                    createNotifications: false,
+                    cancellationToken);
+                return Ok(dto);
+            }
+        }
+
         await hubContext.Clients.User(currentUser.Id.ToString()).SendAsync("chat.message.updated", dto, cancellationToken);
         await hubContext.Clients.User(message.RecipientUserId.ToString()).SendAsync("chat.message.updated", recipientDto, cancellationToken);
         return Ok(dto);
@@ -492,6 +554,17 @@ public sealed class ChatController(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var deleted = new ChatMessageDeletedDto(message.Id);
+        if (message.MarketplaceConversationId is Guid deletedConversationId)
+        {
+            var deletedConversation = await dbContext.MarketplaceConversations.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == deletedConversationId, cancellationToken);
+            if (deletedConversation is not null)
+            {
+                await chatFanout.PublishDeletedAsync(deleted, deletedConversation.CompanyId, deletedConversation.BuyerUserId, cancellationToken);
+                return NoContent();
+            }
+        }
+
         await hubContext.Clients.User(currentUser.Id.ToString()).SendAsync("chat.message.deleted", deleted, cancellationToken);
         await hubContext.Clients.User(message.RecipientUserId.ToString()).SendAsync("chat.message.deleted", deleted, cancellationToken);
         return NoContent();
@@ -548,6 +621,26 @@ public sealed class ChatController(
         var recipientReactions = message.RecipientUserId == currentUser.Id
             ? reactions
             : await GetReactionSummaryAsync(message.Id, message.RecipientUserId, cancellationToken);
+
+        if (message.MarketplaceConversationId is Guid reactionConversationId)
+        {
+            var reactionConversation = await dbContext.MarketplaceConversations.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == reactionConversationId, cancellationToken);
+            if (reactionConversation is not null)
+            {
+                var reactionRows = await dbContext.ChatMessageReactions
+                    .AsNoTracking()
+                    .Where(x => x.ChatMessageId == message.Id)
+                    .ToListAsync(cancellationToken);
+                foreach (var participantId in await chatFanout.ParticipantIdsAsync(reactionConversation.CompanyId, reactionConversation.BuyerUserId, cancellationToken))
+                {
+                    await hubContext.Clients.User(participantId.ToString())
+                        .SendAsync("chat.reaction.updated", new ChatReactionUpdatedDto(message.Id, BuildReactionSummary(reactionRows, participantId)), cancellationToken);
+                }
+
+                return Ok(new ChatReactionUpdatedDto(message.Id, reactions));
+            }
+        }
 
         await hubContext.Clients.User(message.SenderUserId.ToString())
             .SendAsync("chat.reaction.updated", new ChatReactionUpdatedDto(message.Id, senderReactions), cancellationToken);
@@ -619,6 +712,24 @@ public sealed class ChatController(
             return Forbid();
         }
 
+        var typingConversation = await FindMarketplaceConversationAsync(currentUser, request.RecipientUserId, cancellationToken);
+        if (typingConversation is not null)
+        {
+            var signal = new TypingDto(currentUser.Id, DisplayName(currentUser), request.IsTyping, typingConversation.BuyerUserId);
+            foreach (var participantId in await chatFanout.ParticipantIdsAsync(typingConversation.CompanyId, typingConversation.BuyerUserId, cancellationToken))
+            {
+                if (participantId == currentUser.Id)
+                {
+                    continue;
+                }
+
+                await hubContext.Clients.User(participantId.ToString())
+                    .SendAsync("chat.typing", signal, cancellationToken);
+            }
+
+            return NoContent();
+        }
+
         await hubContext.Clients.User(request.RecipientUserId.ToString())
             .SendAsync("chat.typing", new TypingDto(currentUser.Id, DisplayName(currentUser), request.IsTyping), cancellationToken);
 
@@ -678,16 +789,11 @@ public sealed class ChatController(
             .Where(c => c.CompanyId == currentUser.CompanyId)
             .Select(c => c.BuyerUserId);
 
-        var hasMarketplaceAccess = dbContext.WorkerPagePermissions
-            .AsNoTracking()
-            .Any(p => p.UserId == currentUser.Id && p.PageKey == WorkerPageKeys.Marketplace);
-
         return query.Where(user =>
             (user.CompanyId == currentUser.CompanyId &&
              !user.IsSystemAdmin &&
              (user.FarmRole == UserRole.Worker || user.FarmRole == UserRole.Admin)) ||
-            (hasMarketplaceAccess &&
-             user.FarmRole == UserRole.MarketplaceBuyer &&
+            (user.FarmRole == UserRole.MarketplaceBuyer &&
              marketplaceBuyerIds.Contains(user.Id)));
     }
 
@@ -705,10 +811,147 @@ public sealed class ChatController(
                     (m.SenderUserId == contactId && m.RecipientUserId == currentUser.Id) ||
                     (m.SenderUserId == currentUser.Id && m.RecipientUserId == contactId)))) ||
             (c.BuyerUserId == contactId && c.CompanyId == currentUser.CompanyId &&
-             (currentUser.FarmRole == UserRole.Admin ||
-              dbContext.WorkerPagePermissions.Any(p =>
-                  p.UserId == currentUser.Id && p.PageKey == WorkerPageKeys.Marketplace))),
+             (currentUser.FarmRole == UserRole.Admin || currentUser.FarmRole == UserRole.Worker)),
             cancellationToken);
+    }
+
+    private async Task<List<Guid>> SharedMarketplaceConversationIdsAsync(
+        ApplicationUser currentUser,
+        ApplicationUser contact,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.FarmRole == UserRole.MarketplaceBuyer)
+        {
+            return await dbContext.MarketplaceConversations
+                .AsNoTracking()
+                .Where(c => c.BuyerUserId == currentUser.Id &&
+                            (c.FarmContactUserId == contact.Id || c.CompanyId == contact.CompanyId))
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+        }
+
+        if (contact.FarmRole == UserRole.MarketplaceBuyer &&
+            currentUser.CompanyId is Guid companyId &&
+            currentUser.FarmRole is UserRole.Admin or UserRole.Worker)
+        {
+            return await dbContext.MarketplaceConversations
+                .AsNoTracking()
+                .Where(c => c.BuyerUserId == contact.Id && c.CompanyId == companyId)
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+        }
+
+        return [];
+    }
+
+    private async Task<List<ChatMessage>> LoadConversationMessagesAsync(
+        IReadOnlyCollection<Guid> conversationIds,
+        CancellationToken cancellationToken)
+    {
+        if (conversationIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.ChatMessages
+            .AsNoTracking()
+            .Include(x => x.ReplyToMessage)
+            .Include(x => x.Reactions)
+            .Where(x => x.MarketplaceConversationId != null && conversationIds.Contains(x.MarketplaceConversationId.Value) && !x.IsDeleted)
+            .OrderBy(x => x.SentAt)
+            .Take(300)
+            .ToListAsync(cancellationToken);
+    }
+
+    private async Task<Dictionary<Guid, ChatMessage>> LoadSharedPreviewAsync(
+        ApplicationUser currentUser,
+        CancellationToken cancellationToken)
+    {
+        var query = dbContext.MarketplaceConversations.AsNoTracking();
+        if (currentUser.FarmRole == UserRole.MarketplaceBuyer)
+        {
+            query = query.Where(c => c.BuyerUserId == currentUser.Id);
+        }
+        else if (currentUser.CompanyId is Guid companyId)
+        {
+            query = query.Where(c => c.CompanyId == companyId);
+        }
+        else
+        {
+            return [];
+        }
+
+        var conversations = await query
+            .Select(c => new { c.Id, c.BuyerUserId, c.FarmContactUserId })
+            .ToListAsync(cancellationToken);
+        if (conversations.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = conversations.Select(c => c.Id).ToList();
+        var recent = await dbContext.ChatMessages
+            .AsNoTracking()
+            .Where(m => m.MarketplaceConversationId != null && ids.Contains(m.MarketplaceConversationId.Value) && !m.IsDeleted)
+            .OrderByDescending(m => m.SentAt)
+            .Take(300)
+            .ToListAsync(cancellationToken);
+
+        var byId = conversations.ToDictionary(c => c.Id);
+        var result = new Dictionary<Guid, ChatMessage>();
+        foreach (var message in recent)
+        {
+            if (message.MarketplaceConversationId is not Guid conversationId || !byId.TryGetValue(conversationId, out var conversation))
+            {
+                continue;
+            }
+
+            var contactId = currentUser.FarmRole == UserRole.MarketplaceBuyer
+                ? conversation.FarmContactUserId
+                : conversation.BuyerUserId;
+            if (!result.ContainsKey(contactId))
+            {
+                result[contactId] = message;
+            }
+        }
+
+        return result;
+    }
+
+    private async Task<MarketplaceConversation?> FindMarketplaceConversationAsync(
+        ApplicationUser currentUser,
+        Guid otherUserId,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.FarmRole == UserRole.MarketplaceBuyer)
+        {
+            var recipientCompanyId = await dbContext.Users
+                .AsNoTracking()
+                .Where(x => x.Id == otherUserId)
+                .Select(x => x.CompanyId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (recipientCompanyId is null)
+            {
+                return null;
+            }
+
+            return await dbContext.MarketplaceConversations
+                .AsNoTracking()
+                .Where(c => c.BuyerUserId == currentUser.Id && c.CompanyId == recipientCompanyId)
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (currentUser.CompanyId is not Guid companyId)
+        {
+            return null;
+        }
+
+        return await dbContext.MarketplaceConversations
+            .AsNoTracking()
+            .Where(c => c.BuyerUserId == otherUserId && c.CompanyId == companyId)
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private async Task<ApplicationUser?> GetCurrentUserAsync()
@@ -767,7 +1010,8 @@ public sealed class ChatController(
         string? senderDisplayName,
         string? recipientDisplayName,
         string? replySenderDisplayName,
-        string? replyPreview = null)
+        string? replyPreview = null,
+        Guid? marketplaceBuyerUserId = null)
     {
         return new ChatMessageDto(
             message.Id,
@@ -785,7 +1029,8 @@ public sealed class ChatController(
             message.EditedAt,
             message.SenderUserId == currentUserId && DateTimeOffset.UtcNow - message.SentAt <= EditWindow,
             message.SenderUserId == currentUserId && DateTimeOffset.UtcNow - message.SentAt <= EditWindow,
-            BuildReactionSummary(message.Reactions, currentUserId));
+            BuildReactionSummary(message.Reactions, currentUserId),
+            marketplaceBuyerUserId);
     }
 
     private static IReadOnlyCollection<ChatReactionDto> BuildReactionSummary(IEnumerable<ChatMessageReaction> reactions, Guid currentUserId) =>
@@ -842,7 +1087,8 @@ public sealed record ChatMessageDto(
     DateTimeOffset? EditedAt = null,
     bool CanEdit = false,
     bool CanDelete = false,
-    IReadOnlyCollection<ChatReactionDto>? Reactions = null);
+    IReadOnlyCollection<ChatReactionDto>? Reactions = null,
+    Guid? MarketplaceBuyerUserId = null);
 
 public sealed record SendChatMessageRequest(Guid RecipientUserId, string Body, Guid? ReplyToMessageId = null);
 public sealed record UpdateChatMessageRequest(string Body);
@@ -852,4 +1098,4 @@ public sealed record ChatReactionUpdatedDto(Guid MessageId, IReadOnlyCollection<
 public sealed record ChatMessageDeletedDto(Guid MessageId);
 public sealed record ChatReadReceiptDto(Guid ContactId, DateTimeOffset ReadAt);
 public sealed record TypingRequest(Guid RecipientUserId, bool IsTyping);
-public sealed record TypingDto(Guid SenderUserId, string SenderDisplayName, bool IsTyping);
+public sealed record TypingDto(Guid SenderUserId, string SenderDisplayName, bool IsTyping, Guid? MarketplaceBuyerUserId = null);

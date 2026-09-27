@@ -5,16 +5,23 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject GuestSession GuestSession
 
-<section class="listing-chat-pane">
+<section class="listing-chat-pane @(_chatOpen ? "is-chat-open" : null)">
     <header class="listing-chat-pane-header">
         <div>
-            <h2>Message the farm</h2>
-            <p>@FarmName will reply here to arrange fulfillment.</p>
+            <h2>@(_leavingMessage ? "Leave a message" : "Message the farm")</h2>
+            <p>@(_leavingMessage ? $"{FarmName} can reply when they are free." : $"{FarmName} will reply here to arrange fulfillment.")</p>
         </div>
-        @if (_chatOpen)
-        {
-            <span class="chat-live-pill">Live</span>
-        }
+        <div class="listing-chat-pane-actions">
+            @if (_chatOpen)
+            {
+                <span class="chat-live-pill">Live</span>
+                <button type="button" class="chat-pane-close" @onclick="ClosePane">Close</button>
+            }
+            else if (_leavingMessage)
+            {
+                <button type="button" class="chat-pane-close" @onclick="ClosePane">Back</button>
+            }
+        </div>
     </header>
 
     <div class="listing-chat-pane-body">
@@ -23,7 +30,46 @@
             <p class="notice">@_message</p>
         }
 
-        @if (!_chatOpen)
+        @if (_chatOpen)
+        {
+            <ListingChatPanel ListingId="ListingId"
+                              ListingTitle="@ListingTitle"
+                              FarmName="@FarmName"
+                              InitialMessage="@_startedMessage" />
+        }
+        else if (_leavingMessage)
+        {
+            <div class="chat-leave">
+                @if (_sentMessages.Count > 0)
+                {
+                    <ul class="chat-leave-sent">
+                        @foreach (var sent in _sentMessages)
+                        {
+                            <li>
+                                <strong>@sent.Name</strong>
+                                <span>@sent.Body</span>
+                            </li>
+                        }
+                    </ul>
+                }
+                <div class="chat-start-grid">
+                    <label class="full">
+                        <span>Your name</span>
+                        <input @bind="_buyerName" placeholder="Your full name" autocomplete="name" />
+                    </label>
+                    <label class="full">
+                        <span>Message</span>
+                        <textarea @bind="_inquiryMessage" placeholder="Write a message for the farm..." rows="4"></textarea>
+                    </label>
+                </div>
+                <div class="chat-start-actions">
+                    <button class="btn primary" disabled="@_saving" @onclick="SendLeaveMessageAsync">
+                        @(_saving ? "Sending..." : "Send message")
+                    </button>
+                </div>
+            </div>
+        }
+        else
         {
             <div class="chat-start">
                 <p class="chat-start-lead">Share your contact details to start a live chat about this listing.</p>
@@ -53,18 +99,11 @@
                     <button class="btn primary" disabled="@_saving" @onclick="StartChatAsync">
                         @(_saving ? "Starting..." : "Start chat")
                     </button>
-                    <button class="btn secondary" disabled="@_saving" @onclick="LeaveMessageAsync">
+                    <button class="btn secondary" disabled="@_saving" @onclick="OpenLeaveMessage">
                         Leave a message instead
                     </button>
                 </div>
             </div>
-        }
-        else
-        {
-            <ListingChatPanel ListingId="ListingId"
-                              ListingTitle="@ListingTitle"
-                              FarmName="@FarmName"
-                              InitialMessage="@_startedMessage" />
         }
     </div>
 </section>
@@ -76,6 +115,8 @@
 
     private bool _saving;
     private bool _chatOpen;
+    private bool _leavingMessage;
+    private readonly List<LeftMessage> _sentMessages = [];
     private string _buyerName = string.Empty;
     private string _buyerEmail = string.Empty;
     private string _buyerPhone = string.Empty;
@@ -173,12 +214,49 @@
         }
     }
 
-    private async Task LeaveMessageAsync()
+    private void OpenLeaveMessage()
+    {
+        _message = null;
+        if (string.IsNullOrWhiteSpace(_buyerName))
+        {
+            _message = "Enter your name to leave a message.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_buyerEmail) && string.IsNullOrWhiteSpace(_buyerPhone))
+        {
+            _message = "Provide an email or phone number.";
+            return;
+        }
+
+        _leavingMessage = true;
+    }
+
+    private void ClosePane()
+    {
+        _chatOpen = false;
+        _leavingMessage = false;
+        _message = null;
+    }
+
+    private async Task SendLeaveMessageAsync()
     {
         _saving = true;
         _message = null;
         try
         {
+            if (string.IsNullOrWhiteSpace(_buyerName))
+            {
+                _message = "Enter your name so the farm knows who wrote.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_inquiryMessage))
+            {
+                _message = "Write a message for the farm.";
+                return;
+            }
+
             decimal? qty = decimal.TryParse(_qty, out var parsed) ? parsed : null;
             var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
             var response = await client.PostAsJsonAsync("/api/marketplace/inquiries", new
@@ -187,7 +265,7 @@
                 buyerName = _buyerName,
                 buyerEmail = _buyerEmail,
                 buyerPhone = _buyerPhone,
-                message = string.IsNullOrWhiteSpace(_inquiryMessage) ? "Please contact me about this listing." : _inquiryMessage,
+                message = _inquiryMessage.Trim(),
                 quantityRequested = qty
             });
 
@@ -197,14 +275,17 @@
                 return;
             }
 
-            _message = "Message sent. The farm will contact you.";
+            _sentMessages.Add(new LeftMessage(_buyerName.Trim(), _inquiryMessage.Trim()));
             _inquiryMessage = string.Empty;
+            _message = "Message sent. Everyone at the farm can see it and reply.";
         }
         finally
         {
             _saving = false;
         }
     }
+
+    private sealed record LeftMessage(string Name, string Body);
 
     private sealed record GuestSessionDto(
         string Token,

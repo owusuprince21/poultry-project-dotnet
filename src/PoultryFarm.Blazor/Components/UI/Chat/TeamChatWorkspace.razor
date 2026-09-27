@@ -603,7 +603,8 @@
             {
                 await MessageReceived.InvokeAsync(message);
 
-                var contactId = message.IsMine ? message.RecipientUserId : message.SenderUserId;
+                var contactId = message.MarketplaceBuyerUserId
+                    ?? (message.IsMine ? message.RecipientUserId : message.SenderUserId);
                 _lastActivityByContact[contactId] = message.SentAt;
 
                 if (_selectedContact is not null &&
@@ -700,7 +701,8 @@
                 _typingResetCts?.Cancel();
                 _typingResetCts = new CancellationTokenSource();
                 _ = ResetTypingAsync(signal.SenderUserId, _typingResetCts.Token);
-                if (_selectedContact?.Id == signal.SenderUserId)
+                if (_selectedContact?.Id == signal.SenderUserId ||
+                    (signal.MarketplaceBuyerUserId is Guid buyerId && _selectedContact?.Id == buyerId))
                 {
                     _pendingScrollToBottom = true;
                 }
@@ -1183,7 +1185,7 @@
     }
 
     private sealed record ChatReadReceipt(Guid ContactId, DateTimeOffset ReadAt);
-    private sealed record TypingSignal(Guid SenderUserId, string SenderDisplayName, bool IsTyping);
+    private sealed record TypingSignal(Guid SenderUserId, string SenderDisplayName, bool IsTyping, Guid? MarketplaceBuyerUserId = null);
     private sealed record ChatMessageDeleted(Guid MessageId);
     private sealed record ChatReactionUpdated(Guid MessageId, IReadOnlyCollection<ChatReaction> Reactions);
 

@@ -4,10 +4,8 @@ using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using PoultryFarm.Api.Authorization;
-using PoultryFarm.Api.Hubs;
 using PoultryFarm.Api.Services;
 using PoultryFarm.Application.Common.Interfaces;
 using PoultryFarm.Domain.Common;
@@ -26,11 +24,11 @@ public sealed class MarketplaceController(
     UserManager<ApplicationUser> userManager,
     IConfiguration configuration,
     JwtTokenIssuer tokenIssuer,
-    IHubContext<ActivityHub> hubContext,
     IChatMessageProtector messageProtector,
     IActivityNotifier activityNotifier,
     IEmailSender emailSender,
-    ControllerAudit audit) : ControllerBase
+    ControllerAudit audit,
+    MarketplaceChatFanout chatFanout) : ControllerBase
 {
     private static readonly HashSet<string> AllowedImageContentTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1077,6 +1075,18 @@ public sealed class MarketplaceController(
         dbContext.MarketplaceInquiries.Add(inquiry);
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        var preview = inquiry.Message.Length > 140 ? inquiry.Message[..140] + "…" : inquiry.Message;
+        await activityNotifier.NotifyCompanyAsync(
+            listing.CompanyId,
+            $"Buyer message · {listing.Title}",
+            $"{inquiry.BuyerName} left a message: {preview}",
+            actorName: inquiry.BuyerName,
+            kind: "marketplace_inquiry",
+            targetType: "marketplace_inquiry",
+            targetId: inquiry.Id,
+            recipientRoles: [UserRole.Admin, UserRole.Worker],
+            cancellationToken: cancellationToken);
+
         return Ok(ToInquiryDto(inquiry, listing.Title));
     }
 
@@ -1981,22 +1991,7 @@ public sealed class MarketplaceController(
             CreatedByUserId = buyer.Id
         };
 
-        var notification = new AppNotification
-        {
-            RecipientUserId = farmAdmin.Id,
-            CompanyId = conversation.CompanyId,
-            ActorUserId = buyer.Id,
-            ActorName = DisplayBuyerName(buyer),
-            Title = $"Buyer chat · {listingTitle}",
-            Detail = "New marketplace chat message",
-            Kind = "marketplace_chat",
-            TargetType = "chat",
-            TargetId = buyer.Id,
-            SentAt = message.SentAt
-        };
-
         dbContext.ChatMessages.Add(message);
-        dbContext.AppNotifications.Add(notification);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var dto = new ChatMessageDto(
@@ -2007,23 +2002,19 @@ public sealed class MarketplaceController(
             message.SentAt,
             true,
             DisplayBuyerName(buyer),
-            DisplayBuyerName(farmAdmin));
+            DisplayBuyerName(farmAdmin),
+            MarketplaceBuyerUserId: conversation.BuyerUserId);
 
-        var farmDto = dto with { IsMine = false, CanEdit = false, CanDelete = false };
-        await hubContext.Clients.User(buyer.Id.ToString()).SendAsync("chat.message", dto, cancellationToken);
-        await hubContext.Clients.User(farmAdmin.Id.ToString()).SendAsync("chat.message", farmDto, cancellationToken);
-        await hubContext.Clients.User(farmAdmin.Id.ToString())
-            .SendAsync("activity.received", new
-            {
-                id = notification.Id,
-                notification.Title,
-                detail = notification.Detail,
-                actorName = notification.ActorName,
-                notification.Kind,
-                notification.TargetType,
-                notification.TargetId,
-                at = notification.SentAt
-            }, cancellationToken);
+        await chatFanout.PublishMessageAsync(
+            "chat.message",
+            dto,
+            conversation.CompanyId,
+            conversation.BuyerUserId,
+            buyer.Id,
+            $"Buyer chat · {listingTitle}",
+            DisplayBuyerName(buyer),
+            createNotifications: true,
+            cancellationToken);
 
         return dto;
     }
@@ -2041,13 +2032,7 @@ public sealed class MarketplaceController(
             return true;
         }
 
-        if (user.FarmRole != UserRole.Worker)
-        {
-            return false;
-        }
-
-        return await dbContext.WorkerPagePermissions.AsNoTracking()
-            .AnyAsync(x => x.UserId == userId && x.PageKey == WorkerPageKeys.Marketplace, cancellationToken);
+        return user.FarmRole == UserRole.Worker;
     }
 
     private async Task<ApplicationUser?> GetCurrentBuyerAsync()
