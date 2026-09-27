@@ -19,7 +19,7 @@
     }
     else if (_listing is null)
     {
-        <div class="listing-workspace-status">Listing not found or no longer published.</div>
+        <div class="listing-workspace-status">@(_message ?? "Listing not found or no longer published.")</div>
     }
     else
     {
@@ -132,7 +132,7 @@
     private string _inquiryMessage = string.Empty;
     private string? _startedMessage;
     private string? _message;
-    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+    private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
 
     private string ProductImage
     {
@@ -159,6 +159,7 @@
         catch
         {
             _listing = null;
+            _message = "This listing could not be loaded. Go back and try again.";
         }
         finally
         {

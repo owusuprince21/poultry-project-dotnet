@@ -24,6 +24,7 @@ builder.Services.AddScoped<ProtectedSessionStorage>();
 builder.Services.AddHttpClient("PoultryFarm.Api", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Api:BaseUrl"] ?? "http://localhost:5100");
+    client.Timeout = TimeSpan.FromSeconds(15);
 });
 
 var app = builder.Build();

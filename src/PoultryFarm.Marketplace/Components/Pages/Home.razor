@@ -344,7 +344,7 @@
     private List<ActivityDto> _activities = [];
     private List<FarmCardDto> _farms = [];
     private ElementReference _farmCarousel;
-    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+    private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
 
     private readonly HeroSlide[] _slides =
     [

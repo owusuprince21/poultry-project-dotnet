@@ -6,6 +6,7 @@ builder.Services.AddRazorComponents()
 builder.Services.AddHttpClient("PoultryFarm.Api", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Api:BaseUrl"] ?? "http://localhost:5100");
+    client.Timeout = TimeSpan.FromSeconds(15);
 });
 
 builder.Services.AddScoped<PoultryFarm.Marketplace.Services.GuestSession>();

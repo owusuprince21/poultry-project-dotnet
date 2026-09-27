@@ -41,7 +41,8 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
-      Api__BaseUrl: ${API_PUBLIC_URL:-http://${PUBLIC_HOST}:5100}
+      Api__BaseUrl: http://api:8080
+      Api__PublicBaseUrl: ${API_PUBLIC_URL:-http://${PUBLIC_HOST}:5100}
       Apps__MarketplaceBaseUrl: ${MARKET_PUBLIC_URL:-http://${PUBLIC_HOST}:5084}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -63,7 +64,8 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
-      Api__BaseUrl: ${API_PUBLIC_URL:-http://${PUBLIC_HOST}:5100}
+      Api__BaseUrl: http://api:8080
+      Api__PublicBaseUrl: ${API_PUBLIC_URL:-http://${PUBLIC_HOST}:5100}
       Apps__FarmBlazorBaseUrl: ${FARM_PUBLIC_URL:-http://${PUBLIC_HOST}:5083}
     extra_hosts:
       - "host.docker.internal:host-gateway"

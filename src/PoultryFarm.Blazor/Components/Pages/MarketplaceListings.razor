@@ -162,7 +162,7 @@ else
     private Guid? _editingId;
     private List<ListingRow> _listings = [];
     private ListingForm _form = CreateDefaultForm();
-    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+    private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
 
     private bool IsEggs => string.Equals(_form.ListingType, "Eggs", StringComparison.OrdinalIgnoreCase);
     private string UnitDisplayLabel => IsEggs ? "Per crate" : "Per bird";

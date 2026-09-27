@@ -112,7 +112,7 @@ else
     private string _body = string.Empty;
     private string? _mediaUrl;
     private List<ActivityRow> _myPosts = [];
-    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+    private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
     private string MarketplaceFeedUrl => $"{(Configuration["Apps:MarketplaceBaseUrl"] ?? "http://localhost:5084").TrimEnd('/')}/activities";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

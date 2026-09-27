@@ -305,7 +305,7 @@
     private Dictionary<Guid, string> _authorNames = new();
     private Dictionary<Guid, string> _commentErrors = new();
     private Dictionary<Guid, string> _replyErrors = new();
-    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+    private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
 
     private const int MaxPreviewReplies = 2;
 

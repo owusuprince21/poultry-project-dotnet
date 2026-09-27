@@ -147,7 +147,7 @@
 
     private bool _loading = true;
     private FarmDetailDto? _farm;
-    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+    private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
 
     protected override async Task OnParametersSetAsync()
     {

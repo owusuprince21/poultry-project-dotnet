@@ -90,7 +90,7 @@
     private bool _loading = true;
     private string _filter = "All";
     private List<ListingDto> _listings = [];
-    private string ApiBase => (Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
+    private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
 
     private IReadOnlyList<ListingDto> FilteredListings =>
         _filter == "All"
