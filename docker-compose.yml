@@ -22,10 +22,12 @@ services:
       Cors__AllowedOrigins__3: http://${PUBLIC_HOST}:5084
       Cors__AllowedOrigins__4: http://localhost:5083
       Cors__AllowedOrigins__5: http://localhost:5084
+      DataProtection__KeysPath: /var/dpkeys
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - api-uploads:/app/wwwroot/uploads
+      - api-dpkeys:/var/dpkeys
     restart: unless-stopped
 
   dashboard:
@@ -44,9 +46,12 @@ services:
       Api__BaseUrl: http://api:8080
       Api__PublicBaseUrl: ${API_PUBLIC_URL:-http://${PUBLIC_HOST}:5100}
       Apps__MarketplaceBaseUrl: ${MARKET_PUBLIC_URL:-http://${PUBLIC_HOST}:5084}
+      DataProtection__KeysPath: /var/dpkeys
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "${PUBLIC_HOST}:${TAILSCALE_IP:-host-gateway}"
+    volumes:
+      - dashboard-dpkeys:/var/dpkeys
     depends_on:
       - api
     restart: unless-stopped
@@ -67,9 +72,12 @@ services:
       Api__BaseUrl: http://api:8080
       Api__PublicBaseUrl: ${API_PUBLIC_URL:-http://${PUBLIC_HOST}:5100}
       Apps__FarmBlazorBaseUrl: ${FARM_PUBLIC_URL:-http://${PUBLIC_HOST}:5083}
+      DataProtection__KeysPath: /var/dpkeys
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "${PUBLIC_HOST}:${TAILSCALE_IP:-host-gateway}"
+    volumes:
+      - marketplace-dpkeys:/var/dpkeys
     depends_on:
       - api
     restart: unless-stopped
@@ -87,3 +95,6 @@ services:
 
 volumes:
   api-uploads:
+  api-dpkeys:
+  dashboard-dpkeys:
+  marketplace-dpkeys:

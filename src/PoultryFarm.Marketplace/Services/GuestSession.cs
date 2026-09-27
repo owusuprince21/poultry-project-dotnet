@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
 
 namespace PoultryFarm.Marketplace.Services;
@@ -36,9 +37,9 @@ public sealed class GuestSession(ProtectedSessionStorage sessionStorage)
             Phone = (await sessionStorage.GetAsync<string>(PhoneKey)).Value;
             ReactorKey = (await sessionStorage.GetAsync<string>(ReactorKeyStorage)).Value;
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is CryptographicException or InvalidOperationException)
         {
-            // Prerender / JS unavailable.
+            // Prerender, or a session saved before the container key ring changed.
         }
 
         if (string.IsNullOrWhiteSpace(ReactorKey))
@@ -48,9 +49,9 @@ public sealed class GuestSession(ProtectedSessionStorage sessionStorage)
             {
                 await sessionStorage.SetAsync(ReactorKeyStorage, ReactorKey);
             }
-            catch (InvalidOperationException)
+            catch (Exception ex) when (ex is CryptographicException or InvalidOperationException)
             {
-                // Prerender / JS unavailable.
+                // Prerender, or a session saved before the container key ring changed.
             }
         }
 

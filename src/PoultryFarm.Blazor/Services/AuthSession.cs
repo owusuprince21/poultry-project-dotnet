@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
 
 namespace PoultryFarm.Blazor.Services;
@@ -82,17 +83,24 @@ public sealed class AuthSession
             return;
         }
 
-        Token = (await _sessionStorage.GetAsync<string>(TokenKey)).Value;
-        UserId = (await _sessionStorage.GetAsync<Guid?>(UserIdKey)).Value;
-        Username = (await _sessionStorage.GetAsync<string>(UsernameKey)).Value;
-        FirstName = (await _sessionStorage.GetAsync<string>(FirstNameKey)).Value;
-        LastName = (await _sessionStorage.GetAsync<string>(LastNameKey)).Value;
-        Role = (await _sessionStorage.GetAsync<string>(RoleKey)).Value;
-        CompanyId = (await _sessionStorage.GetAsync<Guid?>(CompanyIdKey)).Value;
-        CompanyName = (await _sessionStorage.GetAsync<string>(CompanyNameKey)).Value;
-        CompanyCode = (await _sessionStorage.GetAsync<string>(CompanyCodeKey)).Value;
-        MustChangePassword = (await _sessionStorage.GetAsync<bool>(MustChangePasswordKey)).Value;
-        AllowedPages = (await _sessionStorage.GetAsync<string[]>(AllowedPagesKey)).Value ?? [];
+        try
+        {
+            Token = (await _sessionStorage.GetAsync<string>(TokenKey)).Value;
+            UserId = (await _sessionStorage.GetAsync<Guid?>(UserIdKey)).Value;
+            Username = (await _sessionStorage.GetAsync<string>(UsernameKey)).Value;
+            FirstName = (await _sessionStorage.GetAsync<string>(FirstNameKey)).Value;
+            LastName = (await _sessionStorage.GetAsync<string>(LastNameKey)).Value;
+            Role = (await _sessionStorage.GetAsync<string>(RoleKey)).Value;
+            CompanyId = (await _sessionStorage.GetAsync<Guid?>(CompanyIdKey)).Value;
+            CompanyName = (await _sessionStorage.GetAsync<string>(CompanyNameKey)).Value;
+            CompanyCode = (await _sessionStorage.GetAsync<string>(CompanyCodeKey)).Value;
+            MustChangePassword = (await _sessionStorage.GetAsync<bool>(MustChangePasswordKey)).Value;
+            AllowedPages = (await _sessionStorage.GetAsync<string[]>(AllowedPagesKey)).Value ?? [];
+        }
+        catch (Exception ex) when (ex is CryptographicException or InvalidOperationException)
+        {
+            await ClearStoredSessionAsync();
+        }
 
         IsLoaded = true;
         await RaiseChangedAsync();
@@ -161,6 +169,36 @@ public sealed class AuthSession
         await _sessionStorage.DeleteAsync(MustChangePasswordKey);
         await _sessionStorage.DeleteAsync(AllowedPagesKey);
         await RaiseChangedAsync();
+    }
+
+    private async Task ClearStoredSessionAsync()
+    {
+        Token = null;
+        UserId = null;
+        Username = null;
+        FirstName = null;
+        LastName = null;
+        Role = null;
+        CompanyId = null;
+        CompanyName = null;
+        CompanyCode = null;
+        MustChangePassword = false;
+        AllowedPages = [];
+
+        foreach (var key in new[]
+        {
+            TokenKey, UserIdKey, UsernameKey, FirstNameKey, LastNameKey, RoleKey,
+            CompanyIdKey, CompanyNameKey, CompanyCodeKey, MustChangePasswordKey, AllowedPagesKey
+        })
+        {
+            try
+            {
+                await _sessionStorage.DeleteAsync(key);
+            }
+            catch (Exception ex) when (ex is CryptographicException or InvalidOperationException)
+            {
+            }
+        }
     }
 
     public async Task MarkPasswordChangedAsync()

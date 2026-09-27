@@ -1,7 +1,18 @@
+using Microsoft.AspNetCore.DataProtection;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+var dataProtectionKeys = builder.Configuration["DataProtection:KeysPath"];
+if (!string.IsNullOrWhiteSpace(dataProtectionKeys))
+{
+    Directory.CreateDirectory(dataProtectionKeys);
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeys))
+        .SetApplicationName("PoultryFarm.Marketplace");
+}
 
 builder.Services.AddHttpClient("PoultryFarm.Api", client =>
 {
