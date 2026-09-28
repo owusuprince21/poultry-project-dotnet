@@ -33,7 +33,7 @@
             <div class="social-feed">
                 @foreach (var post in _posts)
                 {
-                    var previewComments = post.Comments.Take(2).ToList();
+                    var previewComments = NewestFirst(post.Comments).Take(2).ToList();
                     var hasMoreComments = post.Comments.Count > 2 || post.CommentCount > 2;
                     <article class="social-card @(FocusPostId == post.Id ? "is-focus" : null)" id="@($"post-{post.Id}")" @key="post.Id">
                         <header class="social-card-head">
@@ -171,7 +171,7 @@
                 }
                 else
                 {
-                    @foreach (var comment in dialogPost.Comments)
+                    @foreach (var comment in NewestFirst(dialogPost.Comments))
                     {
                         @RenderComment(dialogPost, comment, isReply: false, compact: true)
                     }
@@ -240,7 +240,7 @@
                     }
                     else
                     {
-                        @foreach (var reply in repliesParent.Replies)
+                        @foreach (var reply in NewestFirst(repliesParent.Replies))
                         {
                             @RenderComment(repliesPost, reply, isReply: true, compact: false, showReplies: false, threadRootId: repliesParent.Id)
                         }
@@ -374,7 +374,7 @@
     {
         var replyParentId = threadRootId ?? comment.Id;
         var previewReplies = showReplies && !isReply
-            ? comment.Replies.Take(MaxPreviewReplies).ToList()
+            ? NewestFirst(comment.Replies).Take(MaxPreviewReplies).ToList()
             : [];
         var hasMoreReplies = showReplies && !isReply && comment.Replies.Count > MaxPreviewReplies;
         var showPicker = _reactionHoverId == comment.Id || _pinnedReactionCommentId == comment.Id;
@@ -648,6 +648,9 @@
         _replySeeds[id] = string.Empty;
         _replyEpochs[id] = ReplyEpoch(id) + 1;
     }
+
+    private static List<CommentDto> NewestFirst(IEnumerable<CommentDto> comments) =>
+        comments.OrderByDescending(c => c.CreatedAt).ToList();
 
     private static string FormatCount(int count)
     {
