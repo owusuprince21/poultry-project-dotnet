@@ -1962,34 +1962,39 @@ public sealed class MarketplaceController(
         var likeCount = await dbContext.FarmActivityLikes.CountAsync(x => x.PostId == id, cancellationToken);
         var commentCount = await dbContext.FarmActivityComments.CountAsync(x => x.PostId == id, cancellationToken);
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        await dbContext.FarmActivityPosts
-            .Where(x => x.Id == id && x.CompanyId == companyId)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(x => x.Title, title)
-                .SetProperty(x => x.Body, body)
-                .SetProperty(x => x.MediaUrl, mediaUrls.FirstOrDefault())
-                .SetProperty(x => x.IsPublished, isPublished)
-                .SetProperty(x => x.PublishedAt, publishedAt)
-                .SetProperty(x => x.UpdatedAt, DateTimeOffset.UtcNow)
-                .SetProperty(x => x.UpdatedByUserId, userId), cancellationToken);
-
-        await dbContext.FarmActivityImages
-            .Where(x => x.PostId == id)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsDeleted, true), cancellationToken);
-
-        for (var index = 0; index < mediaUrls.Count; index++)
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
         {
-            dbContext.FarmActivityImages.Add(new FarmActivityImage
-            {
-                PostId = id,
-                Url = mediaUrls[index],
-                SortOrder = index
-            });
-        }
+            dbContext.ChangeTracker.Clear();
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            await dbContext.FarmActivityPosts
+                .Where(x => x.Id == id && x.CompanyId == companyId)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Title, title)
+                    .SetProperty(x => x.Body, body)
+                    .SetProperty(x => x.MediaUrl, mediaUrls.FirstOrDefault())
+                    .SetProperty(x => x.IsPublished, isPublished)
+                    .SetProperty(x => x.PublishedAt, publishedAt)
+                    .SetProperty(x => x.UpdatedAt, DateTimeOffset.UtcNow)
+                    .SetProperty(x => x.UpdatedByUserId, userId), cancellationToken);
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            await dbContext.FarmActivityImages
+                .Where(x => x.PostId == id)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsDeleted, true), cancellationToken);
+
+            for (var index = 0; index < mediaUrls.Count; index++)
+            {
+                dbContext.FarmActivityImages.Add(new FarmActivityImage
+                {
+                    PostId = id,
+                    Url = mediaUrls[index],
+                    SortOrder = index
+                });
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        });
 
         return Ok(new FarmActivityManageDto(
             post.Id,
