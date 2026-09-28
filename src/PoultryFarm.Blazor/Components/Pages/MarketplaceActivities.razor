@@ -263,7 +263,9 @@ else
     private Guid? _repliesDialogPostId;
     private Guid? _repliesDialogParentId;
     private Guid? _replyingTo;
+    private Guid? _editingCommentId;
     private string _replyBody = string.Empty;
+    private string _editBody = string.Empty;
     private readonly Dictionary<Guid, string> _drafts = [];
     private string FarmLabel => string.IsNullOrWhiteSpace(AuthSession.CompanyName) ? "your farm" : AuthSession.CompanyName;
     private bool _saving;
@@ -456,14 +458,34 @@ else
                             </span>
                         }
                     </span>
-                    <p>@comment.Body</p>
+                    @if (_editingCommentId != comment.Id)
+                    {
+                        <p>@comment.Body</p>
+                    }
                     <time>@comment.CreatedAt.ToLocalTime().ToString("g")</time>
                 </div>
+                @if (_editingCommentId == comment.Id)
+                {
+                    <form class="farm-composer" @onsubmit="() => SaveCommentEditAsync(comment.Id)" @onsubmit:preventDefault>
+                        <textarea rows="2" maxlength="2000" @bind="_editBody" @bind:event="oninput"></textarea>
+                        <div class="farm-composer-foot">
+                            <button class="farm-post-btn" type="submit" disabled="@(_commentBusy || string.IsNullOrWhiteSpace(_editBody))">
+                                @(_commentBusy ? "Saving…" : "Save")
+                            </button>
+                        </div>
+                    </form>
+                }
                 <div class="farm-comment-tools">
                     @if (!isReply)
                     {
                         <button type="button" class="farm-reply-btn" disabled="@_commentBusy" @onclick="() => StartReply(comment.Id)">
                             @(_replyingTo == comment.Id ? "Cancel" : "Reply")
+                        </button>
+                    }
+                    @if (comment.IsFarm)
+                    {
+                        <button type="button" class="farm-reply-btn" disabled="@_commentBusy" @onclick="() => StartCommentEdit(comment)">
+                            @(_editingCommentId == comment.Id ? "Cancel" : "Edit")
                         </button>
                     }
                     <button type="button" class="farm-reply-btn is-danger" disabled="@_commentBusy" @onclick="() => DeleteCommentAsync(comment)">
@@ -556,8 +578,54 @@ else
 
     private void StartReply(Guid commentId)
     {
+        _editingCommentId = null;
+        _editBody = string.Empty;
         _replyBody = string.Empty;
         _replyingTo = _replyingTo == commentId ? null : commentId;
+    }
+
+    private void StartCommentEdit(ManageComment comment)
+    {
+        if (_editingCommentId == comment.Id)
+        {
+            _editingCommentId = null;
+            _editBody = string.Empty;
+            return;
+        }
+
+        _replyingTo = null;
+        _replyBody = string.Empty;
+        _editingCommentId = comment.Id;
+        _editBody = comment.Body;
+    }
+
+    private async Task SaveCommentEditAsync(Guid commentId)
+    {
+        if (string.IsNullOrWhiteSpace(_editBody))
+        {
+            return;
+        }
+
+        _commentBusy = true;
+        try
+        {
+            var client = CreateApiClient();
+            var response = await client.PutAsJsonAsync($"/api/marketplace/farm/activities/comments/{commentId}", new { body = _editBody });
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            _editingCommentId = null;
+            _editBody = string.Empty;
+            Snackbar.Add("Comment updated.", Severity.Success);
+            await LoadAsync();
+        }
+        finally
+        {
+            _commentBusy = false;
+        }
     }
 
     private async Task SendCommentAsync(Guid postId, Guid? parentCommentId)

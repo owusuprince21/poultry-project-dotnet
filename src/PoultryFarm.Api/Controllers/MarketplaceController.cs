@@ -1999,6 +1999,60 @@ public sealed class MarketplaceController(
     }
 
     [Authorize]
+    [HttpPut("farm/activities/comments/{commentId:guid}")]
+    public async Task<IActionResult> UpdateFarmActivityComment(
+        Guid commentId,
+        CreateFarmActivityCommentRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetManagedCompanyId(out var companyId) || !CanManageMarketplace())
+        {
+            return Forbid();
+        }
+
+        var comment = await dbContext.FarmActivityComments
+            .Include(x => x.Post)
+            .FirstOrDefaultAsync(x => x.Id == commentId && x.Post != null && x.Post.CompanyId == companyId, cancellationToken);
+        if (comment?.Post is null)
+        {
+            return NotFound();
+        }
+
+        if (comment.AuthorCompanyId != companyId)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { detail = "You can only edit comments posted as your farm." });
+        }
+
+        var body = request.Body?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return BadRequest(new { body = "Comment is required." });
+        }
+
+        if (body.Length > 2000)
+        {
+            return BadRequest(new { body = "Comment must be 2000 characters or fewer." });
+        }
+
+        comment.Body = body;
+        comment.UpdatedAt = DateTimeOffset.UtcNow;
+        comment.UpdatedByUserId = GetCurrentUserId();
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            "Update",
+            "Marketplace",
+            "FarmActivityComment",
+            comment.AuthorName,
+            "Edited a farm comment.",
+            comment.Id,
+            companyId,
+            cancellationToken: cancellationToken);
+
+        return Ok(new { comment.Id });
+    }
+
+    [Authorize]
     [HttpDelete("farm/activities/comments/{commentId:guid}")]
     public async Task<IActionResult> DeleteFarmActivityComment(
         Guid commentId,
