@@ -881,12 +881,12 @@ a.farm-card {
 .social-verified {
     display: inline-flex;
     flex: 0 0 auto;
-    color: var(--primary);
+    color: #2196f3;
 }
 
 .social-verified svg {
-    width: 1.05rem;
-    height: 1.05rem;
+    width: 1.15rem;
+    height: 1.15rem;
 }
 
 .social-card-meta span {
