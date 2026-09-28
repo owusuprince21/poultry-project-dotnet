@@ -154,16 +154,18 @@ public sealed class ChatController(
                     listingTitle = buyerMeta.ListingTitle;
                 }
 
-                string? companyName;
-                if (x.FarmRole == UserRole.MarketplaceBuyer && !string.IsNullOrWhiteSpace(buyerMeta.FarmName))
+                var isPlatformStaff = x.IsSystemAdmin || x.FarmRole is UserRole.SystemAdmin or UserRole.SubAdmin;
+                string? companyName = null;
+                if (!isPlatformStaff)
                 {
-                    companyName = buyerMeta.FarmName;
-                }
-                else
-                {
-                    companyName = x.CompanyId.HasValue && companies.TryGetValue(x.CompanyId.Value, out var resolvedName)
-                        ? resolvedName
-                        : null;
+                    if (x.FarmRole == UserRole.MarketplaceBuyer && !string.IsNullOrWhiteSpace(buyerMeta.FarmName))
+                    {
+                        companyName = buyerMeta.FarmName;
+                    }
+                    else if (x.CompanyId.HasValue && companies.TryGetValue(x.CompanyId.Value, out var resolvedName))
+                    {
+                        companyName = resolvedName;
+                    }
                 }
 
                 var canReply = !(isPlatformAdmin && x.FarmRole == UserRole.MarketplaceBuyer);
@@ -180,7 +182,7 @@ public sealed class ChatController(
                     x.FirstName,
                     x.LastName,
                     NormalizeRole(x),
-                    x.CompanyId,
+                    isPlatformStaff ? null : x.CompanyId,
                     companyName,
                     x.LastSeenAt,
                     x.LastSeenAt.HasValue && x.LastSeenAt.Value >= onlineThreshold,

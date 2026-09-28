@@ -740,8 +740,13 @@
             _ => role
         };
 
+    private static bool IsPlatformStaff(ChatContact contact) =>
+        contact.Role is "super_admin" or "sub_admin" or "system_admin";
+
     private static string CompanySuffix(ChatContact contact) =>
-        string.IsNullOrWhiteSpace(contact.CompanyName) ? string.Empty : $" • {contact.CompanyName}";
+        IsPlatformStaff(contact) || string.IsNullOrWhiteSpace(contact.CompanyName)
+            ? string.Empty
+            : $" • {contact.CompanyName}";
 
     private static string ContactMeta(ChatContact contact)
     {
@@ -791,7 +796,9 @@
         }
 
         var role = DisplayRole(contact.Role);
-        return string.IsNullOrWhiteSpace(contact.CompanyName) ? role : $"{role} · {contact.CompanyName}";
+        return IsPlatformStaff(contact) || string.IsNullOrWhiteSpace(contact.CompanyName)
+            ? role
+            : $"{role} · {contact.CompanyName}";
     }
 
     private static string LastSeenText(ChatContact contact)
