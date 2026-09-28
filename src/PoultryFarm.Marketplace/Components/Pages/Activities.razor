@@ -471,7 +471,18 @@
                      @onmouseenter="() => SetReactionHover(comment.Id)"
                      @onmouseleave="() => ClearReactionHover(comment.Id)">
                     <div class="social-comment-bubble">
-                        <strong>@comment.AuthorName</strong>
+                        <span class="social-name-row">
+                            <strong>@comment.AuthorName</strong>
+                            @if (comment.AuthorCompanyId == post.CompanyId)
+                            {
+                                <span class="social-verified" title="Verified farm" aria-label="Verified farm">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                        <path fill="#2196F3" d="M23 12l-2.44-2.78.34-3.68-3.61-.82-1.89-3.18L12 3 8.6 1.54 6.71 4.72l-3.61.81.34 3.68L1 12l2.44 2.78-.34 3.69 3.61.82 1.89 3.18L12 21l3.4 1.46 1.89-3.18 3.61-.82-.34-3.68z" />
+                                        <path fill="#fff" d="M10.09 16.72l-3.8-3.81 1.48-1.48 2.32 2.33 5.85-5.87 1.48 1.48z" />
+                                    </svg>
+                                </span>
+                            }
+                        </span>
                         <p>@comment.Body</p>
                         <time>@comment.CreatedAt.ToLocalTime().ToString("g")</time>
                     </div>

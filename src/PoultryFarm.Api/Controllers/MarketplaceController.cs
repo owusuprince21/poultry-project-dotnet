@@ -1848,6 +1848,49 @@ public sealed class MarketplaceController(
             .GroupBy(x => x.PostId)
             .ToDictionary(g => g.Key, g => g.Select(x => x.Url).ToList());
 
+        var commentRows = postIds.Count == 0
+            ? []
+            : await dbContext.FarmActivityComments
+                .AsNoTracking()
+                .Where(x => postIds.Contains(x.PostId))
+                .OrderByDescending(x => x.CreatedAt)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.PostId,
+                    x.ParentCommentId,
+                    x.AuthorName,
+                    x.AuthorCompanyId,
+                    x.Body,
+                    x.CreatedAt
+                })
+                .ToListAsync(cancellationToken);
+
+        List<FarmActivityManageCommentDto> CommentsFor(Guid postId)
+        {
+            var rows = commentRows.Where(x => x.PostId == postId).ToList();
+            return rows
+                .Where(x => x.ParentCommentId is null)
+                .Select(root => new FarmActivityManageCommentDto(
+                    root.Id,
+                    root.ParentCommentId,
+                    root.AuthorName,
+                    root.AuthorCompanyId == companyId,
+                    root.Body,
+                    root.CreatedAt,
+                    rows.Where(reply => reply.ParentCommentId == root.Id)
+                        .Select(reply => new FarmActivityManageCommentDto(
+                            reply.Id,
+                            reply.ParentCommentId,
+                            reply.AuthorName,
+                            reply.AuthorCompanyId == companyId,
+                            reply.Body,
+                            reply.CreatedAt,
+                            []))
+                        .ToList()))
+                .ToList();
+        }
+
         return Ok(posts.Select(x => new FarmActivityManageDto(
             x.Id,
             x.Title,
@@ -1862,7 +1905,148 @@ public sealed class MarketplaceController(
             imagesByPost.TryGetValue(x.Id, out var urls) && urls.Count > 0
                 ? urls
                 : string.IsNullOrWhiteSpace(x.MediaUrl) ? [] : [x.MediaUrl],
-            x.CreatedByUserId)).ToList());
+            x.CreatedByUserId,
+            CommentsFor(x.Id))).ToList());
+    }
+
+    [Authorize]
+    [HttpPost("farm/activities/{id:guid}/comments")]
+    public async Task<IActionResult> AddFarmActivityComment(
+        Guid id,
+        CreateFarmActivityCommentRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetManagedCompanyId(out var companyId) || !CanManageMarketplace())
+        {
+            return Forbid();
+        }
+
+        var post = await dbContext.FarmActivityPosts
+            .AsNoTracking()
+            .Where(x => x.Id == id && x.CompanyId == companyId)
+            .Select(x => new { x.Id, x.IsPublished, x.CompanyId, FarmName = x.Company!.Name })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (post is null)
+        {
+            return NotFound();
+        }
+
+        if (!post.IsPublished)
+        {
+            return BadRequest(new { detail = "Publish the post before commenting on the marketplace." });
+        }
+
+        var body = request.Body?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return BadRequest(new { body = "Comment is required." });
+        }
+
+        if (body.Length > 2000)
+        {
+            return BadRequest(new { body = "Comment must be 2000 characters or fewer." });
+        }
+
+        Guid? parentCommentId = null;
+        if (request.ParentCommentId is Guid parentId)
+        {
+            var parent = await dbContext.FarmActivityComments
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == parentId && x.PostId == post.Id, cancellationToken);
+            if (parent is null)
+            {
+                return BadRequest(new { parentCommentId = "That comment is no longer on this post." });
+            }
+
+            parentCommentId = parent.ParentCommentId ?? parent.Id;
+        }
+
+        var farmName = string.IsNullOrWhiteSpace(post.FarmName) ? "Farm" : post.FarmName.Trim();
+        if (farmName.Length > 200)
+        {
+            farmName = farmName[..200];
+        }
+
+        var userId = GetCurrentUserId();
+        var comment = new FarmActivityComment
+        {
+            PostId = post.Id,
+            ParentCommentId = parentCommentId,
+            AuthorUserId = userId,
+            AuthorCompanyId = companyId,
+            AuthorName = farmName,
+            Body = body,
+            CreatedByUserId = userId
+        };
+
+        dbContext.FarmActivityComments.Add(comment);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            "Create",
+            "Marketplace",
+            "FarmActivityComment",
+            farmName,
+            parentCommentId is null
+                ? $"Commented on a farm post as {farmName}."
+                : $"Replied to a comment as {farmName}.",
+            comment.Id,
+            companyId,
+            cancellationToken: cancellationToken);
+
+        return Ok(new { comment.Id });
+    }
+
+    [Authorize]
+    [HttpDelete("farm/activities/comments/{commentId:guid}")]
+    public async Task<IActionResult> DeleteFarmActivityComment(
+        Guid commentId,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetManagedCompanyId(out var companyId) || !CanManageMarketplace())
+        {
+            return Forbid();
+        }
+
+        var comment = await dbContext.FarmActivityComments
+            .Include(x => x.Post)
+            .FirstOrDefaultAsync(x => x.Id == commentId && x.Post != null && x.Post.CompanyId == companyId, cancellationToken);
+        if (comment?.Post is null)
+        {
+            return NotFound();
+        }
+
+        var userId = GetCurrentUserId();
+        comment.IsDeleted = true;
+        comment.UpdatedAt = DateTimeOffset.UtcNow;
+        comment.UpdatedByUserId = userId;
+
+        if (comment.ParentCommentId is null)
+        {
+            var replies = await dbContext.FarmActivityComments
+                .Where(x => x.ParentCommentId == comment.Id)
+                .ToListAsync(cancellationToken);
+            foreach (var reply in replies)
+            {
+                reply.IsDeleted = true;
+                reply.UpdatedAt = DateTimeOffset.UtcNow;
+                reply.UpdatedByUserId = userId;
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            "Delete",
+            "Marketplace",
+            "FarmActivityComment",
+            comment.AuthorName,
+            "Removed a comment from a farm post.",
+            comment.Id,
+            companyId,
+            cancellationToken: cancellationToken);
+
+        return Ok(new { detail = "Comment deleted." });
     }
 
     [Authorize]
@@ -1910,7 +2094,7 @@ public sealed class MarketplaceController(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return Ok(new FarmActivityManageDto(
-            post.Id, post.Title, post.Body, post.MediaUrl, post.IsPublished, post.PublishedAt, post.CreatedAt, 0, 0, 0, mediaUrls, post.CreatedByUserId));
+            post.Id, post.Title, post.Body, post.MediaUrl, post.IsPublished, post.PublishedAt, post.CreatedAt, 0, 0, 0, mediaUrls, post.CreatedByUserId, []));
     }
 
     [Authorize]
@@ -2008,7 +2192,8 @@ public sealed class MarketplaceController(
             commentCount,
             post.ShareCount,
             mediaUrls,
-            post.CreatedByUserId));
+            post.CreatedByUserId,
+            []));
     }
 
     private bool CanEditActivity(FarmActivityPost post, Guid? userId) =>
@@ -2571,7 +2756,17 @@ public sealed record FarmActivityManageDto(
     int CommentCount,
     int ShareCount,
     IReadOnlyList<string> MediaUrls,
-    Guid? CreatedByUserId);
+    Guid? CreatedByUserId,
+    IReadOnlyList<FarmActivityManageCommentDto> Comments);
+
+public sealed record FarmActivityManageCommentDto(
+    Guid Id,
+    Guid? ParentCommentId,
+    string AuthorName,
+    bool IsFarm,
+    string Body,
+    DateTimeOffset CreatedAt,
+    IReadOnlyList<FarmActivityManageCommentDto> Replies);
 
 public sealed record CreateFarmActivityRequest(
     string? Title,

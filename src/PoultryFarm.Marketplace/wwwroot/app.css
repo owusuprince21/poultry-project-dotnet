@@ -1224,8 +1224,15 @@ a.farm-card {
     background: var(--bg-muted);
 }
 
+.social-comment-bubble .social-name-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.22rem;
+    max-width: 100%;
+}
+
 .social-comment-bubble strong {
-    display: block;
+    display: inline;
     font-size: 0.86rem;
 }
 

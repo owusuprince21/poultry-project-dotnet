@@ -30,7 +30,7 @@ else
     <ModulePageShell Title="Publish farm posts" Subtitle="Post photos and updates for the public marketplace. Anyone can like, comment, and share there — no login required.">
         <MudStack Spacing="3">
             <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-                Engagement (likes, comments, shares) happens on the public marketplace feed.
+                Reply to comments here. Anything you or a coworker writes is shown as your farm, with the verified badge.
                 <MudLink Href="@MarketplaceFeedUrl" Target="_blank">Open marketplace activity feed</MudLink>
             </MudAlert>
 
@@ -122,6 +122,48 @@ else
                             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                                 @post.LikeCount likes · @post.CommentCount comments · @post.ShareCount shares on marketplace
                             </MudText>
+                            @if (post.IsPublished)
+                            {
+                                <MudDivider />
+                                <MudText Typo="Typo.subtitle2">Comments</MudText>
+                                @if (post.Comments is not { Count: > 0 })
+                                {
+                                    <MudText Typo="Typo.body2" Class="mud-text-secondary">No comments yet.</MudText>
+                                }
+                                else
+                                {
+                                    @foreach (var comment in post.Comments)
+                                    {
+                                        @RenderManageComment(post.Id, comment, isReply: false)
+                                        @foreach (var reply in comment.Replies)
+                                        {
+                                            <div style="margin-left:1.4rem;">
+                                                @RenderManageComment(post.Id, reply, isReply: true)
+                                            </div>
+                                        }
+                                    }
+                                }
+                                <MudTextField T="string"
+                                              Value="@Draft(post.Id)"
+                                              ValueChanged="@(value => _drafts[post.Id] = value)"
+                                              Label="@($"Comment as {FarmLabel}")"
+                                              Variant="Variant.Outlined"
+                                              Lines="2"
+                                              Immediate="true" />
+                                <div>
+                                    <MudButton Variant="Variant.Filled"
+                                               Color="Color.Primary"
+                                               Size="Size.Small"
+                                               Disabled="@(_commentBusy || string.IsNullOrWhiteSpace(Draft(post.Id)))"
+                                               OnClick="@(() => SendCommentAsync(post.Id, null))">
+                                        Comment
+                                    </MudButton>
+                                </div>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">Publish this post before you reply to people on the marketplace.</MudText>
+                            }
                         </MudStack>
                     </MudPaper>
                 }
@@ -133,6 +175,11 @@ else
 @code {
     private const int MaxPhotos = 10;
     private bool _loaded;
+    private bool _commentBusy;
+    private Guid? _replyingTo;
+    private string _replyBody = string.Empty;
+    private readonly Dictionary<Guid, string> _drafts = [];
+    private string FarmLabel => string.IsNullOrWhiteSpace(AuthSession.CompanyName) ? "your farm" : AuthSession.CompanyName;
     private bool _saving;
     private bool _uploading;
     private bool _publishNow = true;
@@ -301,6 +348,132 @@ else
         await LoadAsync();
     }
 
+    private string Draft(Guid postId) => _drafts.TryGetValue(postId, out var text) ? text : string.Empty;
+
+    private RenderFragment RenderManageComment(Guid postId, ManageComment comment, bool isReply) => __builder =>
+    {
+        <MudPaper Class="pa-3" Elevation="0" Style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;">
+            <MudStack Spacing="1">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudText Typo="Typo.subtitle2">@comment.AuthorName</MudText>
+                    @if (comment.IsFarm)
+                    {
+                        <span title="Verified farm" aria-label="Verified farm" style="display:inline-flex;color:#2196F3;">
+                            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                                <path fill="#2196F3" d="M23 12l-2.44-2.78.34-3.68-3.61-.82-1.89-3.18L12 3 8.6 1.54 6.71 4.72l-3.61.81.34 3.68L1 12l2.44 2.78-.34 3.69 3.61.82 1.89 3.18L12 21l3.4 1.46 1.89-3.18 3.61-.82-.34-3.68z" />
+                                <path fill="#fff" d="M10.09 16.72l-3.8-3.81 1.48-1.48 2.32 2.33 5.85-5.87 1.48 1.48z" />
+                            </svg>
+                        </span>
+                    }
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@comment.CreatedAt.ToLocalTime().ToString("g")</MudText>
+                </MudStack>
+                <MudText Typo="Typo.body2" Style="white-space:pre-wrap;">@comment.Body</MudText>
+                <MudStack Row="true" Spacing="1">
+                    @if (!isReply)
+                    {
+                        <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="_commentBusy" OnClick="@(() => StartReply(comment.Id))">
+                            @(_replyingTo == comment.Id ? "Cancel" : "Reply")
+                        </MudButton>
+                    }
+                    <MudButton Variant="Variant.Text" Color="Color.Error" Size="Size.Small" Disabled="_commentBusy" OnClick="@(() => DeleteCommentAsync(comment))">
+                        Delete
+                    </MudButton>
+                </MudStack>
+                @if (!isReply && _replyingTo == comment.Id)
+                {
+                    <MudTextField @bind-Value="_replyBody" Label="@($"Reply as {FarmLabel}")" Variant="Variant.Outlined" Lines="2" Immediate="true" />
+                    <div>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="@(_commentBusy || string.IsNullOrWhiteSpace(_replyBody))" OnClick="@(() => SendCommentAsync(postId, comment.Id))">
+                            Reply
+                        </MudButton>
+                    </div>
+                }
+            </MudStack>
+        </MudPaper>
+    };
+
+    private void StartReply(Guid commentId)
+    {
+        _replyBody = string.Empty;
+        _replyingTo = _replyingTo == commentId ? null : commentId;
+    }
+
+    private async Task SendCommentAsync(Guid postId, Guid? parentCommentId)
+    {
+        var body = parentCommentId is null ? Draft(postId) : _replyBody;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return;
+        }
+
+        _commentBusy = true;
+        try
+        {
+            var client = CreateApiClient();
+            var response = await client.PostAsJsonAsync($"/api/marketplace/farm/activities/{postId}/comments", new
+            {
+                body,
+                parentCommentId
+            });
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            if (parentCommentId is null)
+            {
+                _drafts.Remove(postId);
+            }
+            else
+            {
+                _replyBody = string.Empty;
+                _replyingTo = null;
+            }
+
+            Snackbar.Add(parentCommentId is null ? "Comment posted as your farm." : "Reply posted as your farm.", Severity.Success);
+            await LoadAsync();
+        }
+        finally
+        {
+            _commentBusy = false;
+        }
+    }
+
+    private async Task DeleteCommentAsync(ManageComment comment)
+    {
+        var label = string.IsNullOrWhiteSpace(comment.AuthorName) ? "this comment" : $"{comment.AuthorName}'s comment";
+        if (!await TableActionConfirm.ConfirmAsync("delete", label))
+        {
+            return;
+        }
+
+        _commentBusy = true;
+        try
+        {
+            var client = CreateApiClient();
+            var response = await client.DeleteAsync($"/api/marketplace/farm/activities/comments/{comment.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(await ApiErrorFormatter.FormatHttpAsync(response), Severity.Error);
+                return;
+            }
+
+            if (_replyingTo == comment.Id)
+            {
+                _replyingTo = null;
+                _replyBody = string.Empty;
+            }
+
+            Snackbar.Add("Comment deleted.", Severity.Success);
+            await LoadAsync();
+        }
+        finally
+        {
+            _commentBusy = false;
+        }
+    }
+
     private string ResolveMediaUrl(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)) return string.Empty;
@@ -320,6 +493,7 @@ else
         return client;
     }
 
-    private sealed record ActivityRow(Guid Id, string Title, string Body, string? MediaUrl, bool IsPublished, DateTimeOffset? PublishedAt, DateTimeOffset CreatedAt, int LikeCount, int CommentCount, int ShareCount, List<string>? MediaUrls, Guid? CreatedByUserId);
+    private sealed record ActivityRow(Guid Id, string Title, string Body, string? MediaUrl, bool IsPublished, DateTimeOffset? PublishedAt, DateTimeOffset CreatedAt, int LikeCount, int CommentCount, int ShareCount, List<string>? MediaUrls, Guid? CreatedByUserId, List<ManageComment>? Comments);
+    private sealed record ManageComment(Guid Id, Guid? ParentCommentId, string AuthorName, bool IsFarm, string Body, DateTimeOffset CreatedAt, List<ManageComment> Replies);
     private sealed record UploadResponse(string Url);
 }
