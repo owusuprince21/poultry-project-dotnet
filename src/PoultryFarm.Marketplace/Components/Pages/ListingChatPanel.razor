@@ -109,7 +109,16 @@
             }
             @if (_peerTyping)
             {
-                <div class="chat-typing">@_farmContactName is typing...</div>
+                <div class="chat-row theirs typing-row">
+                    <div class="chat-typing-alert">
+                        <div class="chat-typing-bubble" aria-hidden="true">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                        <p>Farm admin is typing</p>
+                    </div>
+                </div>
             }
         </div>
 
@@ -394,6 +403,10 @@
             }
 
             _peerTyping = signal.IsTyping;
+            if (signal.IsTyping)
+            {
+                _pendingScrollToBottom = true;
+            }
             _ = InvokeAsync(StateHasChanged);
         });
 
