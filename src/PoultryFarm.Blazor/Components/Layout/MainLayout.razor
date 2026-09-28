@@ -10,6 +10,7 @@
 
 @inject AuthSession AuthSession
 @inject NavigationManager Navigation
+@inject IJSRuntime Js
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
 @inject NavBadgeState NavBadgeState
@@ -129,6 +130,9 @@
     <MudDrawer @bind-Open="_drawerOpen"
                Elevation="0"
                Variant="DrawerVariant.Responsive"
+               Breakpoint="Breakpoint.Md"
+               Overlay="true"
+               Width="min(88vw, 300px)"
                Class="app-drawer">
 
 
@@ -289,6 +293,10 @@
         await LoadUnreadChatSummaryAsync();
         await LoadPendingFarmerRegistrationBadgeAsync();
         await ConnectHubAsync();
+        if (await IsNarrowAsync())
+        {
+            _drawerOpen = false;
+        }
 
         await InvokeAsync(StateHasChanged);
     }
@@ -319,9 +327,35 @@
     private bool IsFarmAssistancePage =>
         new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/').Equals("/farm-assistance", StringComparison.OrdinalIgnoreCase);
 
-    private void HandleLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
+    private async void HandleLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
     {
-        _ = InvokeAsync(StateHasChanged);
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (await IsNarrowAsync())
+                {
+                    _drawerOpen = false;
+                }
+
+                StateHasChanged();
+            });
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    private async Task<bool> IsNarrowAsync()
+    {
+        try
+        {
+            return await Js.InvokeAsync<bool>("poultryFarmUi.isNarrow");
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     private void OpenTeamChat()

@@ -93,5 +93,9 @@ window.poultryFarmUi = {
         if (objectUrl) {
             URL.revokeObjectURL(objectUrl);
         }
+    },
+
+    isNarrow() {
+        return window.innerWidth < 960;
     }
 };

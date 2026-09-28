@@ -21,7 +21,9 @@
                 aria-expanded="@_open"
                 @onclick="Toggle">
             <span>@Group.Title</span>
-            <span class="nav-section-chevron @(_open ? "is-open" : null)" aria-hidden="true">▸</span>
+            <MudIcon Icon="@Icons.Material.Filled.KeyboardArrowRight"
+                     Class="@($"nav-section-chevron {(_open ? "is-open" : null)}")"
+                     aria-hidden="true" />
         </button>
         @if (_open)
         {

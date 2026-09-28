@@ -270,9 +270,17 @@ h1:focus {
 }
 
 .nav-section-chevron {
-    font-size: .85rem;
+    flex: 0 0 auto;
+    color: #0f172a !important;
+    font-size: 1.55rem !important;
+    width: 1.55rem;
+    height: 1.55rem;
     line-height: 1;
     transition: transform .15s ease;
+}
+
+.nav-section-toggle:hover .nav-section-chevron {
+    color: #1d4ed8 !important;
 }
 
 .nav-section-chevron.is-open {
@@ -1436,6 +1444,132 @@ h1:focus {
 @media (min-width: 900px) {
     .topbar-welcome {
         display: block;
+    }
+}
+
+@media (max-width: 960px) {
+    html,
+    body {
+        overflow-x: hidden;
+    }
+
+    .main-content,
+    .mud-main-content {
+        min-width: 0;
+        overflow-x: hidden;
+    }
+
+    .app-bar .mud-toolbar {
+        gap: .15rem;
+        min-height: 3.5rem;
+        padding-inline: .35rem;
+    }
+
+    .app-bar .mud-typography-h6 {
+        max-width: 42vw;
+        overflow: hidden;
+        font-size: .98rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .app-bar .mud-chip {
+        display: none;
+    }
+
+    .topbar-notification-anchor {
+        margin-right: .2rem;
+    }
+
+    .topbar-icon-button {
+        width: 2.35rem;
+        height: 2.35rem;
+    }
+
+    .dashboard-shell {
+        max-width: 100%;
+        padding: .85rem .7rem 5.5rem;
+    }
+
+    .page-heading {
+        align-items: stretch;
+        flex-direction: column;
+        gap: .75rem;
+    }
+
+    .page-heading .mud-typography-h4 {
+        font-size: 1.4rem;
+        line-height: 1.2;
+    }
+
+    .page-heading .mud-button-root {
+        width: 100%;
+    }
+
+    .dashboard-shell .mud-stack {
+        flex-wrap: wrap;
+    }
+
+    .dashboard-shell .mud-paper,
+    .dashboard-shell .mud-card,
+    .metric-card,
+    .work-surface,
+    .operation-card,
+    .dashboard-overview-panel {
+        max-width: 100%;
+    }
+
+    .mud-table-container {
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .mud-dialog {
+        max-width: calc(100vw - 1rem) !important;
+        margin: .5rem;
+    }
+
+    .mud-dialog-content,
+    .mud-dialog-actions {
+        padding-inline: .85rem;
+    }
+
+    .mud-dialog-actions {
+        flex-wrap: wrap;
+    }
+
+    .chat-side-dialog {
+        top: 3.5rem;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        border-radius: 0;
+    }
+
+    .team-chat-fab-menu {
+        right: .75rem;
+        bottom: .75rem;
+    }
+
+    .notification-panel {
+        width: min(22rem, calc(100vw - 1rem));
+        max-height: min(70vh, 28rem);
+    }
+
+    .mud-nav-link {
+        min-height: 2.75rem;
+    }
+
+    .farm-assistant-shell {
+        height: calc(100dvh - 7.5rem);
+        min-height: 24rem;
+    }
+
+    .team-chat-workspace {
+        height: auto;
+        min-height: 0;
     }
 }
 
