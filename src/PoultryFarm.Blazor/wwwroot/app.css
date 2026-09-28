@@ -1422,10 +1422,6 @@ h1:focus {
         display: block;
     }
 
-    .team-chat-contacts {
-        max-height: 18rem;
-    }
-
     .team-chat-fab-menu.assistance-page {
         bottom: 5.75rem;
     }
@@ -1506,7 +1502,7 @@ h1:focus {
         width: 100%;
     }
 
-    .dashboard-shell .mud-stack {
+    .dashboard-shell .mud-stack-row {
         flex-wrap: wrap;
     }
 
@@ -1568,8 +1564,22 @@ h1:focus {
     }
 
     .team-chat-workspace {
-        height: auto;
+        height: calc(100dvh - 12rem);
         min-height: 0;
+        overflow: hidden;
+    }
+
+    .team-chat-workspace.compact,
+    .chat-side-dialog .team-chat-contacts,
+    .team-chat-contacts {
+        max-height: none;
+        height: 100%;
+        min-height: 0;
+        overflow-y: auto;
+    }
+
+    .team-chat-workspace.compact {
+        overflow: hidden;
     }
 }
 
