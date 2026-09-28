@@ -41,6 +41,30 @@ window.marketplaceUi = {
         element.scrollBy({ left: delta, behavior: "smooth" });
     },
 
+    lockPageScroll(locked) {
+        const root = document.documentElement;
+        if (locked) {
+            if (root.classList.contains("social-dialog-open")) {
+                return;
+            }
+
+            root.dataset.scrollLockY = String(window.scrollY || 0);
+            root.classList.add("social-dialog-open");
+            document.body.style.top = `-${root.dataset.scrollLockY}px`;
+            return;
+        }
+
+        if (!root.classList.contains("social-dialog-open")) {
+            return;
+        }
+
+        const scrollY = Number(root.dataset.scrollLockY || "0");
+        root.classList.remove("social-dialog-open");
+        document.body.style.top = "";
+        delete root.dataset.scrollLockY;
+        window.scrollTo(0, Number.isFinite(scrollY) ? scrollY : 0);
+    },
+
     showToast(message, tone = "info", durationMs = 4200) {
         const text = (message || "").toString().trim();
         if (!text) {

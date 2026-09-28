@@ -9,6 +9,7 @@
 @inject IConfiguration Configuration
 @inject GuestSession GuestSession
 @inject IJSRuntime Js
+@implements IAsyncDisposable
 
 <section class="social-feed-page">
     <div class="social-feed-shell">
@@ -233,7 +234,7 @@
                 <div class="social-dialog-parent">
                     @RenderComment(repliesPost, repliesParent with { Replies = [] }, isReply: false, compact: false, showReplies: false)
                 </div>
-                <div class="social-dialog-replies">
+                <div class="social-dialog-replies social-replies">
                     @if (repliesParent.Replies.Count == 0)
                     {
                         <p class="social-comments-empty">No replies yet.</p>
@@ -320,8 +321,7 @@
     private Dictionary<Guid, string> _commentErrors = new();
     private Dictionary<Guid, string> _replyErrors = new();
     private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
-
-    private const int MaxPreviewReplies = 2;
+    private bool _pageScrollLocked;
 
     private ActivityDto? _dialogPost =>
         _commentsDialogPostId is Guid id ? _posts.FirstOrDefault(x => x.Id == id) : null;
@@ -353,6 +353,8 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        await SyncPageScrollLockAsync();
+
         if (!firstRender || FocusPostId is null) return;
         try
         {
@@ -361,6 +363,42 @@
         catch
         {
             // Ignore if JS unavailable.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (!_pageScrollLocked)
+        {
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("marketplaceUi.lockPageScroll", false);
+        }
+        catch
+        {
+            // Ignore if JS unavailable.
+        }
+    }
+
+    private async Task SyncPageScrollLockAsync()
+    {
+        var lockScroll = _dialogPost is not null || _repliesDialog is not null;
+        if (lockScroll == _pageScrollLocked)
+        {
+            return;
+        }
+
+        _pageScrollLocked = lockScroll;
+        try
+        {
+            await Js.InvokeVoidAsync("marketplaceUi.lockPageScroll", lockScroll);
+        }
+        catch
+        {
+            _pageScrollLocked = false;
         }
     }
 
@@ -373,10 +411,6 @@
         Guid? threadRootId = null) => __builder =>
     {
         var replyParentId = threadRootId ?? comment.Id;
-        var previewReplies = showReplies && !isReply
-            ? NewestFirst(comment.Replies).Take(MaxPreviewReplies).ToList()
-            : [];
-        var hasMoreReplies = showReplies && !isReply && comment.Replies.Count > MaxPreviewReplies;
         var showPicker = _reactionHoverId == comment.Id || _pinnedReactionCommentId == comment.Id;
         <div class="@(isReply ? "social-comment is-reply" : "social-comment")" @key="comment.Id">
             <div class="social-avatar sm" aria-hidden="true">@Initials(comment.AuthorName)</div>
@@ -443,20 +477,17 @@
                     </div>
                 </div>
 
-                @if (showReplies && !isReply && previewReplies.Count > 0)
+                @if (showReplies && !isReply && comment.Replies.Count == 1)
                 {
                     <div class="social-replies">
-                        @foreach (var reply in previewReplies)
-                        {
-                            @RenderComment(post, reply, isReply: true, compact: compact, showReplies: false, threadRootId: comment.Id)
-                        }
-                        @if (hasMoreReplies)
-                        {
-                            <button type="button" class="social-see-more is-inline" @onclick="() => OpenRepliesDialog(post.Id, comment.Id)">
-                                See more replies
-                            </button>
-                        }
+                        @RenderComment(post, comment.Replies[0], isReply: true, compact: compact, showReplies: false, threadRootId: comment.Id)
                     </div>
+                }
+                else if (showReplies && !isReply && comment.Replies.Count > 1)
+                {
+                    <button type="button" class="social-see-more is-inline is-strong" @onclick="() => OpenRepliesDialog(post.Id, comment.Id)">
+                        See all replies
+                    </button>
                 }
 
                 @if (_replyingTo == comment.Id)

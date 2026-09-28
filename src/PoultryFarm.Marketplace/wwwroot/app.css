@@ -1015,6 +1015,10 @@ a.farm-card {
     font-size: 0.82rem;
 }
 
+.social-see-more.is-strong {
+    font-weight: 800;
+}
+
 .social-comment {
     display: flex;
     align-items: flex-start;
@@ -1183,6 +1187,7 @@ a.farm-card {
     place-items: center;
     padding: 1rem;
     background: rgba(15, 23, 42, 0.48);
+    overscroll-behavior: none;
 }
 
 .social-dialog {
@@ -1239,10 +1244,24 @@ a.farm-card {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     display: grid;
     gap: 0.85rem;
     padding: 1rem 1.1rem;
     background: #fcfcfd;
+}
+
+html.social-dialog-open,
+html.social-dialog-open body {
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+html.social-dialog-open body {
+    position: fixed;
+    left: 0;
+    right: 0;
+    width: 100%;
 }
 
 .social-dialog-parent {
