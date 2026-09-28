@@ -1123,6 +1123,12 @@ a.farm-card {
     display: inline-flex;
 }
 
+.social-comment-interact.is-reaction-dismissed .social-reaction-picker,
+.social-comment-interact.is-reaction-dismissed:hover .social-reaction-picker,
+.social-comment-interact.is-reaction-dismissed:focus-within .social-reaction-picker {
+    display: none;
+}
+
 .social-reaction-add {
     width: 1.7rem;
     height: 1.7rem;
@@ -2221,6 +2227,12 @@ a.farm-card {
     transform: translateY(0);
 }
 
+.chat-bubble.reactions-dismissed .chat-hover-reactions,
+.chat-bubble.reactions-dismissed:hover .chat-hover-reactions {
+    opacity: 0;
+    pointer-events: none;
+}
+
 .chat-hover-reactions button,
 .chat-reactions button {
     display: inline-flex;
@@ -2950,6 +2962,12 @@ a.farm-card {
         position: static;
         max-width: 100%;
         flex-wrap: wrap;
+    }
+
+    .social-comment-interact.is-reaction-dismissed .social-reaction-picker,
+    .social-comment-interact.is-reaction-dismissed:hover .social-reaction-picker,
+    .social-comment-interact.is-reaction-dismissed:focus-within .social-reaction-picker {
+        display: none;
     }
 
     .social-composer-foot {

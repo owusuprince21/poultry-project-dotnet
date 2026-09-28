@@ -49,11 +49,12 @@
                         <div class="chat-avatar sm">@Initials(message.SenderDisplayName ?? _farmContactName)</div>
                     }
                     <div class="chat-message-wrap">
-                        <div class="chat-bubble @(message.IsMine ? "mine" : "theirs")">
+                        <div class="chat-bubble @(message.IsMine ? "mine" : "theirs") @(_dismissedReactionMessageId == message.Id ? "reactions-dismissed" : null)"
+                             @onmouseleave="() => ClearDismissedReaction(message.Id)">
                             <div class="chat-hover-reactions">
                                 @foreach (var emoji in QuickReactionEmojis)
                                 {
-                                    <button type="button" title="React @emoji" @onclick="@(() => ReactAsync(message, emoji))">@emoji</button>
+                                    <button type="button" title="React @emoji" @onmousedown:preventDefault="true" @onclick="@(() => ReactAsync(message, emoji))">@emoji</button>
                                 }
                             </div>
                             @if (!string.IsNullOrWhiteSpace(message.ReplyPreview))
@@ -224,6 +225,7 @@
     private bool _showEmojiPicker;
     private bool _emojisLoading;
     private bool _pendingScrollToBottom;
+    private Guid? _dismissedReactionMessageId;
     private ChatMessageRow? _replyTo;
     private CancellationTokenSource? _typingCts;
 
@@ -501,6 +503,16 @@
         _composerEpoch++;
     }
 
+    private void DismissReactionPicker(Guid messageId) => _dismissedReactionMessageId = messageId;
+
+    private void ClearDismissedReaction(Guid messageId)
+    {
+        if (_dismissedReactionMessageId == messageId)
+        {
+            _dismissedReactionMessageId = null;
+        }
+    }
+
     private async Task ReactAsync(ChatMessageRow message, string emoji)
     {
         if (string.IsNullOrWhiteSpace(emoji))
@@ -508,6 +520,8 @@
             return;
         }
 
+        DismissReactionPicker(message.Id);
+        StateHasChanged();
         try
         {
             var response = await CreateApiClient().PostAsJsonAsync($"/api/chat/messages/{message.Id}/reactions", new { emoji });

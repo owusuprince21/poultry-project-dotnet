@@ -118,14 +118,16 @@
                                            maxlength="80"
                                            placeholder="Your name"
                                            autocomplete="nickname"
-                                           value="@GetAuthor(post.Id)"
-                                           @oninput="e => SetAuthor(post.Id, e.Value?.ToString())"
+                                           value="@AuthorSeed(post.Id)"
+                                           @key="@($"author-{post.Id}-{AuthorEpoch(post.Id)}")"
+                                           @oninput="e => OnAuthorInput(post.Id, e)"
                                            required />
                                     <textarea rows="2"
                                               maxlength="2000"
                                               placeholder="Write a comment…"
-                                              value="@GetDraft(post.Id)"
-                                              @oninput="e => SetDraft(post.Id, e.Value?.ToString())"
+                                              value="@DraftSeed(post.Id)"
+                                              @key="@($"draft-{post.Id}-{DraftEpoch(post.Id)}")"
+                                              @oninput="e => OnDraftInput(post.Id, e)"
                                               required></textarea>
                                 </div>
                                 <div class="social-composer-foot">
@@ -183,14 +185,16 @@
                         <input type="text"
                                maxlength="80"
                                placeholder="Your name"
-                               value="@GetAuthor(dialogPost.Id)"
-                               @oninput="e => SetAuthor(dialogPost.Id, e.Value?.ToString())"
+                               value="@AuthorSeed(dialogPost.Id)"
+                               @key="@($"author-{dialogPost.Id}-{AuthorEpoch(dialogPost.Id)}")"
+                               @oninput="e => OnAuthorInput(dialogPost.Id, e)"
                                required />
                         <textarea rows="2"
                                   maxlength="2000"
                                   placeholder="Write a comment…"
-                                  value="@GetDraft(dialogPost.Id)"
-                                  @oninput="e => SetDraft(dialogPost.Id, e.Value?.ToString())"
+                                  value="@DraftSeed(dialogPost.Id)"
+                                  @key="@($"draft-{dialogPost.Id}-{DraftEpoch(dialogPost.Id)}")"
+                                  @oninput="e => OnDraftInput(dialogPost.Id, e)"
                                   required></textarea>
                     </div>
                     <div class="social-composer-foot">
@@ -251,14 +255,16 @@
                         <input type="text"
                                maxlength="80"
                                placeholder="Your name"
-                               value="@GetAuthor(repliesPost.Id)"
-                               @oninput="e => SetAuthor(repliesPost.Id, e.Value?.ToString())"
+                               value="@AuthorSeed(repliesPost.Id)"
+                               @key="@($"author-{repliesPost.Id}-{AuthorEpoch(repliesPost.Id)}")"
+                               @oninput="e => OnAuthorInput(repliesPost.Id, e)"
                                required />
                         <textarea rows="2"
                                   maxlength="2000"
                                   placeholder="@($"Reply to {repliesParent.AuthorName}…")"
-                                  value="@GetReplyDraft(repliesParent.Id)"
-                                  @oninput="e => SetReplyDraft(repliesParent.Id, e.Value?.ToString())"
+                                  value="@ReplySeed(repliesParent.Id)"
+                                  @key="@($"reply-{repliesParent.Id}-{ReplyEpoch(repliesParent.Id)}")"
+                                  @oninput="e => OnReplyDraftInput(repliesParent.Id, e)"
                                   required></textarea>
                     </div>
                     <div class="social-composer-foot">
@@ -288,6 +294,7 @@
 
     private bool _loading = true;
     private string? _commentingKey;
+    private bool _skipRender;
     private Guid? _likingId;
     private Guid? _sharingId;
     private Guid? _shareFlashId;
@@ -299,10 +306,17 @@
     private Guid? _repliesDialogParentId;
     private Guid? _reactionHoverId;
     private Guid? _pinnedReactionCommentId;
+    private Guid? _dismissedReactionCommentId;
     private List<ActivityDto> _posts = [];
     private Dictionary<Guid, string> _drafts = new();
+    private Dictionary<Guid, string> _draftSeeds = new();
+    private Dictionary<Guid, int> _draftEpochs = new();
     private Dictionary<Guid, string> _replyDrafts = new();
+    private Dictionary<Guid, string> _replySeeds = new();
+    private Dictionary<Guid, int> _replyEpochs = new();
     private Dictionary<Guid, string> _authorNames = new();
+    private Dictionary<Guid, string> _authorSeeds = new();
+    private Dictionary<Guid, int> _authorEpochs = new();
     private Dictionary<Guid, string> _commentErrors = new();
     private Dictionary<Guid, string> _replyErrors = new();
     private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
@@ -367,7 +381,7 @@
         <div class="@(isReply ? "social-comment is-reply" : "social-comment")" @key="comment.Id">
             <div class="social-avatar sm" aria-hidden="true">@Initials(comment.AuthorName)</div>
             <div class="social-comment-main">
-                <div class="social-comment-interact"
+                <div class="social-comment-interact @(_dismissedReactionCommentId == comment.Id ? "is-reaction-dismissed" : null)"
                      @onmouseenter="() => SetReactionHover(comment.Id)"
                      @onmouseleave="() => ClearReactionHover(comment.Id)">
                     <div class="social-comment-bubble">
@@ -385,6 +399,7 @@
                                     <button type="button"
                                             class="social-reaction-chip @(reaction.ReactedByMe ? "is-mine" : null)"
                                             disabled="@(_reactingCommentId == comment.Id)"
+                                            @onmousedown:preventDefault="true"
                                             @onclick="() => ReactAsync(post.Id, comment.Id, reaction.Emoji)"
                                             @onclick:stopPropagation="true">
                                         <span>@reaction.Emoji</span>
@@ -451,14 +466,16 @@
                             <input type="text"
                                    maxlength="80"
                                    placeholder="Your name"
-                                   value="@GetAuthor(post.Id)"
-                                   @oninput="e => SetAuthor(post.Id, e.Value?.ToString())"
+                                   value="@AuthorSeed(post.Id)"
+                                   @key="@($"author-{post.Id}-{AuthorEpoch(post.Id)}")"
+                                   @oninput="e => OnAuthorInput(post.Id, e)"
                                    required />
                             <textarea rows="2"
                                       maxlength="2000"
                                       placeholder="@($"Reply to {comment.AuthorName}…")"
-                                      value="@GetReplyDraft(comment.Id)"
-                                      @oninput="e => SetReplyDraft(comment.Id, e.Value?.ToString())"
+                                      value="@ReplySeed(comment.Id)"
+                                      @key="@($"reply-{comment.Id}-{ReplyEpoch(comment.Id)}")"
+                                      @oninput="e => OnReplyDraftInput(comment.Id, e)"
                                       required></textarea>
                         </div>
                         <div class="social-composer-foot">
@@ -490,9 +507,12 @@
             foreach (var post in _posts)
             {
                 _drafts.TryAdd(post.Id, string.Empty);
+                _draftSeeds.TryAdd(post.Id, _drafts[post.Id]);
                 if (!_authorNames.ContainsKey(post.Id))
                 {
-                    _authorNames[post.Id] = GuestSession.DisplayName ?? string.Empty;
+                    var name = GuestSession.DisplayName ?? string.Empty;
+                    _authorNames[post.Id] = name;
+                    _authorSeeds[post.Id] = name;
                 }
             }
         }
@@ -537,14 +557,38 @@
 
     private void SetReactionHover(Guid commentId)
     {
+        if (_dismissedReactionCommentId == commentId)
+        {
+            return;
+        }
+
         _reactionHoverId = commentId;
     }
 
     private void ClearReactionHover(Guid commentId)
     {
+        if (_dismissedReactionCommentId == commentId)
+        {
+            _dismissedReactionCommentId = null;
+        }
+
         if (_reactionHoverId == commentId && _pinnedReactionCommentId != commentId)
         {
             _reactionHoverId = null;
+        }
+    }
+
+    private void DismissReactionPicker(Guid commentId)
+    {
+        _dismissedReactionCommentId = commentId;
+        if (_reactionHoverId == commentId)
+        {
+            _reactionHoverId = null;
+        }
+
+        if (_pinnedReactionCommentId == commentId)
+        {
+            _pinnedReactionCommentId = null;
         }
     }
 
@@ -561,11 +605,49 @@
     }
 
     private string GetDraft(Guid id) => _drafts.TryGetValue(id, out var value) ? value : string.Empty;
-    private void SetDraft(Guid id, string? value) => _drafts[id] = value ?? string.Empty;
+    private string DraftSeed(Guid id) => _draftSeeds.TryGetValue(id, out var value) ? value : string.Empty;
+    private int DraftEpoch(Guid id) => _draftEpochs.TryGetValue(id, out var value) ? value : 0;
     private string GetReplyDraft(Guid id) => _replyDrafts.TryGetValue(id, out var value) ? value : string.Empty;
-    private void SetReplyDraft(Guid id, string? value) => _replyDrafts[id] = value ?? string.Empty;
+    private string ReplySeed(Guid id) => _replySeeds.TryGetValue(id, out var value) ? value : string.Empty;
+    private int ReplyEpoch(Guid id) => _replyEpochs.TryGetValue(id, out var value) ? value : 0;
     private string GetAuthor(Guid id) => _authorNames.TryGetValue(id, out var value) ? value : string.Empty;
-    private void SetAuthor(Guid id, string? value) => _authorNames[id] = value ?? string.Empty;
+    private string AuthorSeed(Guid id) => _authorSeeds.TryGetValue(id, out var value) ? value : string.Empty;
+    private int AuthorEpoch(Guid id) => _authorEpochs.TryGetValue(id, out var value) ? value : 0;
+
+    private void OnAuthorInput(Guid id, ChangeEventArgs e) => RememberInput(() => _authorNames[id] = e.Value?.ToString() ?? string.Empty);
+    private void OnDraftInput(Guid id, ChangeEventArgs e) => RememberInput(() => _drafts[id] = e.Value?.ToString() ?? string.Empty);
+    private void OnReplyDraftInput(Guid id, ChangeEventArgs e) => RememberInput(() => _replyDrafts[id] = e.Value?.ToString() ?? string.Empty);
+
+    private void RememberInput(Action write)
+    {
+        write();
+        _skipRender = true;
+    }
+
+    protected override bool ShouldRender()
+    {
+        if (!_skipRender)
+        {
+            return true;
+        }
+
+        _skipRender = false;
+        return false;
+    }
+
+    private void ResetDraft(Guid id)
+    {
+        _drafts[id] = string.Empty;
+        _draftSeeds[id] = string.Empty;
+        _draftEpochs[id] = DraftEpoch(id) + 1;
+    }
+
+    private void ResetReplyDraft(Guid id)
+    {
+        _replyDrafts[id] = string.Empty;
+        _replySeeds[id] = string.Empty;
+        _replyEpochs[id] = ReplyEpoch(id) + 1;
+    }
 
     private static string FormatCount(int count)
     {
@@ -710,12 +792,12 @@
 
             if (errorKey is Guid cleared)
             {
-                _replyDrafts[cleared] = string.Empty;
+                ResetReplyDraft(cleared);
                 _replyingTo = null;
             }
             else
             {
-                _drafts[postId] = string.Empty;
+                ResetDraft(postId);
             }
 
             await LoadAsync();
@@ -770,6 +852,8 @@
 
     private async Task ReactAsync(Guid postId, Guid commentId, string emoji)
     {
+        DismissReactionPicker(commentId);
+        StateHasChanged();
         await GuestSession.LoadAsync();
         if (string.IsNullOrWhiteSpace(GuestSession.ReactorKey))
         {
@@ -777,7 +861,6 @@
         }
 
         _reactingCommentId = commentId;
-        _reactionHoverId = commentId;
         try
         {
             var client = HttpClientFactory.CreateClient("PoultryFarm.Api");

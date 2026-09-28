@@ -861,6 +861,12 @@ h1:focus {
     transform: translateY(.15rem);
 }
 
+.chat-bubble.reactions-dismissed .chat-hover-reactions,
+.chat-bubble.reactions-dismissed:hover .chat-hover-reactions {
+    opacity: 0;
+    pointer-events: none;
+}
+
 .chat-hover-reactions button,
 .chat-reactions button {
     display: inline-flex;

@@ -114,11 +114,12 @@
                     {
                         <div class="chat-bubble-row @(message.IsMine ? "mine" : "theirs")">
                             <div class="chat-message-wrap">
-                            <div class="chat-bubble">
+                            <div class="chat-bubble @(_dismissedReactionMessageId == message.Id ? "reactions-dismissed" : null)"
+                                 @onmouseleave="() => ClearDismissedReaction(message.Id)">
                                 <div class="chat-hover-reactions bottom">
                                     @foreach (var emoji in QuickReactionEmojis)
                                     {
-                                        <button type="button" @onclick="@(() => ReactAsync(message, emoji))">@emoji</button>
+                                        <button type="button" @onmousedown:preventDefault="true" @onclick="@(() => ReactAsync(message, emoji))">@emoji</button>
                                     }
                                 </div>
                                 @if (!string.IsNullOrWhiteSpace(message.ReplyPreview))
@@ -309,6 +310,7 @@
     private bool _pendingScrollToBottom;
     private bool _contactsLoaded;
     private bool _emojisLoading;
+    private Guid? _dismissedReactionMessageId;
 
     private static readonly TimeSpan MessageActionWindow = TimeSpan.FromMinutes(10);
     private static readonly string[] QuickReactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -1035,8 +1037,20 @@
         _messages.RemoveAll(x => x.Id == message.Id);
     }
 
+    private void DismissReactionPicker(Guid messageId) => _dismissedReactionMessageId = messageId;
+
+    private void ClearDismissedReaction(Guid messageId)
+    {
+        if (_dismissedReactionMessageId == messageId)
+        {
+            _dismissedReactionMessageId = null;
+        }
+    }
+
     private async Task ReactAsync(TeamChatMessage message, string emoji)
     {
+        DismissReactionPicker(message.Id);
+        StateHasChanged();
         var response = await CreateApiClient().PostAsJsonAsync($"/api/chat/messages/{message.Id}/reactions", new
         {
             emoji
