@@ -57,7 +57,7 @@ public static class DevelopmentDataSeeder
             email: "admin@demo-farm.local",
             firstName: "System",
             lastName: "Admin",
-            company.Id,
+            Guid.Empty,
             UserRole.SystemAdmin,
             isSystemAdmin: true,
             mustChangePassword: false,
@@ -181,7 +181,7 @@ public static class DevelopmentDataSeeder
                 Email = email,
                 FirstName = firstName,
                 LastName = lastName,
-                CompanyId = companyId,
+                CompanyId = isSystemAdmin ? null : companyId,
                 FarmRole = farmRole,
                 IsSystemAdmin = isSystemAdmin,
                 MustChangePassword = mustChangePassword,
@@ -199,7 +199,7 @@ public static class DevelopmentDataSeeder
             user.Email ??= email;
             user.FirstName ??= firstName;
             user.LastName ??= lastName;
-            user.CompanyId ??= companyId;
+            user.CompanyId = isSystemAdmin ? null : user.CompanyId ?? companyId;
             user.FarmRole = farmRole;
             user.IsSystemAdmin = isSystemAdmin;
             await userManager.UpdateAsync(user);
