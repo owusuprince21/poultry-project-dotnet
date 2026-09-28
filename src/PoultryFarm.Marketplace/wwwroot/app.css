@@ -1174,8 +1174,11 @@ a.farm-card {
 
 .social-dialog-backdrop {
     position: fixed;
-    inset: 0;
-    z-index: 80;
+    top: calc(var(--topbar-height) + 0.35rem);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 200;
     display: grid;
     place-items: center;
     padding: 1rem;
@@ -1184,7 +1187,7 @@ a.farm-card {
 
 .social-dialog {
     width: min(560px, 100%);
-    max-height: min(88vh, 760px);
+    max-height: min(760px, calc(100% - 0.5rem));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1260,7 +1263,7 @@ a.farm-card {
 
     .social-dialog {
         width: 100%;
-        max-height: 92vh;
+        max-height: 100%;
         border-radius: 16px 16px 0 0;
     }
 }
