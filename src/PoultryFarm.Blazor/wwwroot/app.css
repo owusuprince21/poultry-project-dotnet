@@ -242,9 +242,41 @@ h1:focus {
 
 .nav-section {
     display: block;
-    padding: 1rem 1rem .35rem;
+    width: calc(100% - 1.1rem);
+    margin: 0 .55rem;
+    padding: 1rem .45rem .35rem;
+    border: 0;
+    background: transparent;
     color: #64748b;
+    font: inherit;
+    font-size: .75rem;
+    font-weight: 500;
     letter-spacing: .08em;
+    line-height: 1.5;
+    text-align: left;
+    text-transform: uppercase;
+}
+
+.nav-section-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    cursor: pointer;
+}
+
+.nav-section-toggle:hover {
+    color: #1d4ed8;
+}
+
+.nav-section-chevron {
+    font-size: .85rem;
+    line-height: 1;
+    transition: transform .15s ease;
+}
+
+.nav-section-chevron.is-open {
+    transform: rotate(90deg);
 }
 
 .drawer-footer {

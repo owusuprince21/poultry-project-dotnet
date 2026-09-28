@@ -2,17 +2,34 @@
 @using PoultryFarm.Blazor.Services
 
 @inject AuthSession AuthSession
+@inject NavigationManager Navigation
+@implements IDisposable
 
-@if (VisibleItems.Any())
+@if (VisibleItems.Count > 0)
 {
-    <MudText Typo="Typo.overline" Class="nav-section">
-        @Group.Title
-    </MudText>
-
-    @foreach (var item in VisibleItems)
+    @if (VisibleItems.Count == 1)
     {
-        <AuthorizedNavLink Item="@item"
-                           Match="@GetMatch(item)" />
+        <MudText Typo="Typo.overline" Class="nav-section">
+            @Group.Title
+        </MudText>
+        <AuthorizedNavLink Item="@VisibleItems[0]" Match="@GetMatch(VisibleItems[0])" />
+    }
+    else
+    {
+        <button type="button"
+                class="nav-section nav-section-toggle"
+                aria-expanded="@_open"
+                @onclick="Toggle">
+            <span>@Group.Title</span>
+            <span class="nav-section-chevron @(_open ? "is-open" : null)" aria-hidden="true">▸</span>
+        </button>
+        @if (_open)
+        {
+            @foreach (var item in VisibleItems)
+            {
+                <AuthorizedNavLink Item="@item" Match="@GetMatch(item)" />
+            }
+        }
     }
 }
 
@@ -20,13 +37,53 @@
     [Parameter, EditorRequired]
     public NavGroup Group { get; set; } = default!;
 
-    private IEnumerable<NavItem> VisibleItems =>
-        Group.Items.Where(item => NavAuthorization.IsVisible(AuthSession, item));
+    private bool _open;
+    private List<NavItem> VisibleItems =>
+        Group.Items.Where(item => NavAuthorization.IsVisible(AuthSession, item)).ToList();
 
-    private static NavLinkMatch GetMatch(NavItem item)
+    protected override void OnInitialized()
     {
-        return item.Href == "/dashboard"
-            ? NavLinkMatch.All
-            : NavLinkMatch.Prefix;
+        _open = ContainsCurrentPage();
+        Navigation.LocationChanged += OnLocationChanged;
     }
+
+    private void Toggle() => _open = !_open;
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        if (ContainsCurrentPage())
+        {
+            _open = true;
+        }
+
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private bool ContainsCurrentPage()
+    {
+        var relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+        var path = "/" + relative.Split('?', '#')[0].Trim('/');
+        if (path == "/")
+        {
+            path = "/dashboard";
+        }
+
+        return VisibleItems.Any(item => Matches(path, item.Href));
+    }
+
+    private static bool Matches(string path, string href)
+    {
+        if (href == "/dashboard")
+        {
+            return path == "/dashboard";
+        }
+
+        return path.Equals(href, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(href.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static NavLinkMatch GetMatch(NavItem item) =>
+        item.Href == "/dashboard" ? NavLinkMatch.All : NavLinkMatch.Prefix;
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
 }
