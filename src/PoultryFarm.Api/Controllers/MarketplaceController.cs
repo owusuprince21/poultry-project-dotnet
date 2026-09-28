@@ -666,6 +666,26 @@ public sealed class MarketplaceController(
             .GroupBy(x => x.PostId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        var imageRows = await dbContext.FarmActivityImages
+            .AsNoTracking()
+            .Where(x => postIds.Contains(x.PostId))
+            .OrderBy(x => x.SortOrder)
+            .Select(x => new { x.PostId, x.Url })
+            .ToListAsync(cancellationToken);
+        var imagesByPost = imageRows
+            .GroupBy(x => x.PostId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Url).ToList());
+
+        List<string> MediaFor(Guid postId, string? mediaUrl)
+        {
+            if (imagesByPost.TryGetValue(postId, out var urls) && urls.Count > 0)
+            {
+                return urls;
+            }
+
+            return string.IsNullOrWhiteSpace(mediaUrl) ? [] : [mediaUrl];
+        }
+
         var result = postRows.Select(post =>
         {
             commentsByPost.TryGetValue(post.Id, out var postComments);
@@ -711,6 +731,7 @@ public sealed class MarketplaceController(
                 post.Title,
                 post.Body,
                 post.MediaUrl,
+                MediaFor(post.Id, post.MediaUrl),
                 post.PublishedAt,
                 post.LikeCount,
                 post.CommentCount,
@@ -1760,7 +1781,8 @@ public sealed class MarketplaceController(
             .AsNoTracking()
             .Where(x => x.CompanyId == companyId)
             .OrderByDescending(x => x.CreatedAt)
-            .Select(x => new FarmActivityManageDto(
+            .Select(x => new
+            {
                 x.Id,
                 x.Title,
                 x.Body,
@@ -1768,12 +1790,41 @@ public sealed class MarketplaceController(
                 x.IsPublished,
                 x.PublishedAt,
                 x.CreatedAt,
-                x.Likes.Count(l => !l.IsDeleted),
-                x.Comments.Count(c => !c.IsDeleted),
-                x.ShareCount))
+                LikeCount = x.Likes.Count(l => !l.IsDeleted),
+                CommentCount = x.Comments.Count(c => !c.IsDeleted),
+                x.ShareCount,
+                x.CreatedByUserId
+            })
             .ToListAsync(cancellationToken);
 
-        return Ok(posts);
+        var postIds = posts.Select(x => x.Id).ToList();
+        var imageRows = postIds.Count == 0
+            ? []
+            : await dbContext.FarmActivityImages
+                .AsNoTracking()
+                .Where(x => postIds.Contains(x.PostId))
+                .OrderBy(x => x.SortOrder)
+                .Select(x => new { x.PostId, x.Url })
+                .ToListAsync(cancellationToken);
+        var imagesByPost = imageRows
+            .GroupBy(x => x.PostId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Url).ToList());
+
+        return Ok(posts.Select(x => new FarmActivityManageDto(
+            x.Id,
+            x.Title,
+            x.Body,
+            x.MediaUrl,
+            x.IsPublished,
+            x.PublishedAt,
+            x.CreatedAt,
+            x.LikeCount,
+            x.CommentCount,
+            x.ShareCount,
+            imagesByPost.TryGetValue(x.Id, out var urls) && urls.Count > 0
+                ? urls
+                : string.IsNullOrWhiteSpace(x.MediaUrl) ? [] : [x.MediaUrl],
+            x.CreatedByUserId)).ToList());
     }
 
     [Authorize]
@@ -1800,23 +1851,119 @@ public sealed class MarketplaceController(
         }
 
         var publish = request.PublishNow;
+        var mediaUrls = NormalizeActivityMedia(request.MediaUrls, request.MediaUrl);
         var post = new FarmActivityPost
         {
             CompanyId = companyId,
             Title = title,
             Body = body,
-            MediaUrl = NormalizeMediaUrl(request.MediaUrl),
+            MediaUrl = mediaUrls.FirstOrDefault(),
             IsPublished = publish,
             PublishedAt = publish ? DateTimeOffset.UtcNow : null,
-            CreatedByUserId = GetCurrentUserId()
+            CreatedByUserId = GetCurrentUserId(),
+            Images = mediaUrls.Select((url, index) => new FarmActivityImage
+            {
+                Url = url,
+                SortOrder = index
+            }).ToList()
         };
 
         dbContext.FarmActivityPosts.Add(post);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return Ok(new FarmActivityManageDto(
-            post.Id, post.Title, post.Body, post.MediaUrl, post.IsPublished, post.PublishedAt, post.CreatedAt, 0, 0, 0));
+            post.Id, post.Title, post.Body, post.MediaUrl, post.IsPublished, post.PublishedAt, post.CreatedAt, 0, 0, 0, mediaUrls, post.CreatedByUserId));
     }
+
+    [Authorize]
+    [HttpPut("farm/activities/{id:guid}")]
+    public async Task<ActionResult<FarmActivityManageDto>> UpdateFarmActivity(
+        Guid id,
+        CreateFarmActivityRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetManagedCompanyId(out var companyId) || !CanManageMarketplace())
+        {
+            return Forbid();
+        }
+
+        var post = await dbContext.FarmActivityPosts
+            .Include(x => x.Images)
+            .FirstOrDefaultAsync(x => x.Id == id && x.CompanyId == companyId, cancellationToken);
+        if (post is null)
+        {
+            return NotFound();
+        }
+
+        var userId = GetCurrentUserId();
+        if (!CanEditActivity(post, userId))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { detail = "Only the person who wrote this post can edit it." });
+        }
+
+        var body = request.Body?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return BadRequest(new { body = "Post text is required." });
+        }
+
+        var title = request.Title?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = body.Length <= 80 ? body : body[..80].TrimEnd() + "…";
+        }
+
+        var mediaUrls = NormalizeActivityMedia(request.MediaUrls, request.MediaUrl);
+        post.Title = title;
+        post.Body = body;
+        post.MediaUrl = mediaUrls.FirstOrDefault();
+        post.UpdatedAt = DateTimeOffset.UtcNow;
+        post.UpdatedByUserId = userId;
+        if (request.PublishNow)
+        {
+            post.IsPublished = true;
+            post.PublishedAt ??= DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            post.IsPublished = false;
+        }
+
+        foreach (var image in post.Images)
+        {
+            image.IsDeleted = true;
+        }
+
+        for (var index = 0; index < mediaUrls.Count; index++)
+        {
+            post.Images.Add(new FarmActivityImage
+            {
+                Url = mediaUrls[index],
+                SortOrder = index
+            });
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new FarmActivityManageDto(
+            post.Id,
+            post.Title,
+            post.Body,
+            post.MediaUrl,
+            post.IsPublished,
+            post.PublishedAt,
+            post.CreatedAt,
+            post.Likes.Count(l => !l.IsDeleted),
+            post.Comments.Count(c => !c.IsDeleted),
+            post.ShareCount,
+            mediaUrls,
+            post.CreatedByUserId));
+    }
+
+    private bool CanEditActivity(FarmActivityPost post, Guid? userId) =>
+        post.CreatedByUserId is Guid author
+            ? author == userId
+            : PermissionHelpers.IsCompanyAdmin(User) || PermissionHelpers.IsSystemAdmin(User);
 
     [Authorize]
     [HttpDelete("farm/activities/{id:guid}")]
@@ -2139,6 +2286,33 @@ public sealed class MarketplaceController(
         return "/" + trimmed.TrimStart('/');
     }
 
+    private const int MaxActivityImages = 10;
+
+    private static List<string> NormalizeActivityMedia(IReadOnlyList<string>? mediaUrls, string? mediaUrl)
+    {
+        var source = mediaUrls is { Count: > 0 }
+            ? mediaUrls
+            : string.IsNullOrWhiteSpace(mediaUrl) ? [] : new[] { mediaUrl };
+
+        var list = new List<string>();
+        foreach (var raw in source)
+        {
+            var url = NormalizeMediaUrl(raw);
+            if (string.IsNullOrWhiteSpace(url) || list.Contains(url, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            list.Add(url);
+            if (list.Count == MaxActivityImages)
+            {
+                break;
+            }
+        }
+
+        return list;
+    }
+
     private string? ResolveReactorKey(string? requestedKey)
     {
         if (GetCurrentUserId() is Guid userId)
@@ -2289,6 +2463,7 @@ public sealed record FarmActivityPublicDto(
     string Title,
     string Body,
     string? MediaUrl,
+    IReadOnlyList<string> MediaUrls,
     DateTimeOffset? PublishedAt,
     int LikeCount,
     int CommentCount,
@@ -2343,13 +2518,16 @@ public sealed record FarmActivityManageDto(
     DateTimeOffset CreatedAt,
     int LikeCount,
     int CommentCount,
-    int ShareCount);
+    int ShareCount,
+    IReadOnlyList<string> MediaUrls,
+    Guid? CreatedByUserId);
 
 public sealed record CreateFarmActivityRequest(
     string? Title,
     string Body,
     string? MediaUrl,
-    bool PublishNow);
+    bool PublishNow,
+    IReadOnlyList<string>? MediaUrls = null);
 
 public sealed record CreateMarketplaceInquiryRequest(
     Guid ListingId,

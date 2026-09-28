@@ -50,13 +50,31 @@
                             {
                                 <h2>@post.Title</h2>
                             }
-                            <p>@post.Body</p>
+                            <p class="@(_expandedPosts.Contains(post.Id) || !BodyOverflows(post.Body) ? null : "is-collapsed")">@post.Body</p>
+                            @if (BodyOverflows(post.Body) && !_expandedPosts.Contains(post.Id))
+                            {
+                                <button type="button" class="social-see-more" @onclick="() => _expandedPosts.Add(post.Id)">See more</button>
+                            }
                         </div>
 
-                        @if (!string.IsNullOrWhiteSpace(post.MediaUrl))
+                        @{
+                            var images = PostImages(post);
+                        }
+                        @if (images.Count > 0)
                         {
-                            <div class="social-card-media">
-                                <img src="@ResolveMediaUrl(post.MediaUrl)" alt="@post.Title" loading="lazy" />
+                            <div class="social-album count-@AlbumCount(images.Count)">
+                                @for (var index = 0; index < Math.Min(images.Count, 5); index++)
+                                {
+                                    var imageIndex = index;
+                                    var hiddenCount = images.Count - 5;
+                                    <button type="button" @onclick="() => OpenViewer(post.Id, imageIndex)">
+                                        <img src="@ResolveMediaUrl(images[imageIndex])" alt="@post.Title" loading="lazy" />
+                                        @if (imageIndex == 4 && hiddenCount > 0)
+                                        {
+                                            <span class="social-album-more">+@hiddenCount</span>
+                                        }
+                                    </button>
+                                }
                             </div>
                         }
 
@@ -287,6 +305,29 @@
     </div>
 }
 
+@if (_viewerPostId is Guid viewerPostId)
+{
+    var viewerPost = _posts.FirstOrDefault(x => x.Id == viewerPostId);
+    var viewerImages = viewerPost is null ? [] : PostImages(viewerPost);
+    if (viewerImages.Count > 0)
+    {
+        var safeIndex = Math.Clamp(_viewerIndex, 0, viewerImages.Count - 1);
+        <div class="social-viewer" role="dialog" aria-modal="true" aria-label="Post photos">
+            <button type="button" class="social-viewer-close" @onclick="CloseViewer" aria-label="Close">×</button>
+            @if (viewerImages.Count > 1)
+            {
+                <button type="button" class="social-viewer-nav is-prev" @onclick="() => StepViewer(-1)" aria-label="Previous photo">‹</button>
+            }
+            <img src="@ResolveMediaUrl(viewerImages[safeIndex])" alt="@(viewerPost?.Title ?? "Post photo")" />
+            @if (viewerImages.Count > 1)
+            {
+                <button type="button" class="social-viewer-nav is-next" @onclick="() => StepViewer(1)" aria-label="Next photo">›</button>
+                <span class="social-viewer-count">@(safeIndex + 1) / @viewerImages.Count</span>
+            }
+        </div>
+    }
+}
+
 @code {
     [SupplyParameterFromQuery(Name = "post")]
     public Guid? FocusPostId { get; set; }
@@ -322,6 +363,9 @@
     private Dictionary<Guid, string> _replyErrors = new();
     private string ApiBase => (Configuration["Api:PublicBaseUrl"] ?? Configuration["Api:BaseUrl"] ?? "http://localhost:5100").TrimEnd('/');
     private bool _pageScrollLocked;
+    private readonly HashSet<Guid> _expandedPosts = [];
+    private Guid? _viewerPostId;
+    private int _viewerIndex;
 
     private ActivityDto? _dialogPost =>
         _commentsDialogPostId is Guid id ? _posts.FirstOrDefault(x => x.Id == id) : null;
@@ -385,7 +429,7 @@
 
     private async Task SyncPageScrollLockAsync()
     {
-        var lockScroll = _dialogPost is not null || _repliesDialog is not null;
+        var lockScroll = _dialogPost is not null || _repliesDialog is not null || _viewerPostId is not null;
         if (lockScroll == _pageScrollLocked)
         {
             return;
@@ -943,6 +987,65 @@
         _posts[postIndex] = post with { Comments = updatedComments };
     }
 
+    private static bool BodyOverflows(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        var lines = body.Replace("\r\n", "\n").Split('\n');
+        if (lines.Length > 7)
+        {
+            return true;
+        }
+
+        var estimated = lines.Sum(line => Math.Max(1, (int)Math.Ceiling(line.Length / 62d)));
+        return estimated > 7;
+    }
+
+    private static int AlbumCount(int count) => Math.Clamp(count, 1, 5);
+
+    private static List<string> PostImages(ActivityDto post)
+    {
+        if (post.MediaUrls is { Count: > 0 })
+        {
+            return post.MediaUrls;
+        }
+
+        return string.IsNullOrWhiteSpace(post.MediaUrl) ? [] : [post.MediaUrl];
+    }
+
+    private void OpenViewer(Guid postId, int index)
+    {
+        _viewerPostId = postId;
+        _viewerIndex = index;
+    }
+
+    private void CloseViewer()
+    {
+        _viewerPostId = null;
+        _viewerIndex = 0;
+    }
+
+    private void StepViewer(int delta)
+    {
+        if (_viewerPostId is not Guid postId)
+        {
+            return;
+        }
+
+        var post = _posts.FirstOrDefault(x => x.Id == postId);
+        var images = post is null ? [] : PostImages(post);
+        if (images.Count == 0)
+        {
+            CloseViewer();
+            return;
+        }
+
+        _viewerIndex = (_viewerIndex + delta + images.Count) % images.Count;
+    }
+
     private string ResolveMediaUrl(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)) return string.Empty;
@@ -962,6 +1065,7 @@
         string Title,
         string Body,
         string? MediaUrl,
+        List<string>? MediaUrls,
         DateTimeOffset? PublishedAt,
         int LikeCount,
         int CommentCount,

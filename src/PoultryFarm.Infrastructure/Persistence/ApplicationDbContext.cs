@@ -39,6 +39,7 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
     public DbSet<ChatMessageReaction> ChatMessageReactions => Set<ChatMessageReaction>();
     public DbSet<FarmActivityPost> FarmActivityPosts => Set<FarmActivityPost>();
+    public DbSet<FarmActivityImage> FarmActivityImages => Set<FarmActivityImage>();
     public DbSet<FarmActivityComment> FarmActivityComments => Set<FarmActivityComment>();
     public DbSet<FarmActivityCommentReaction> FarmActivityCommentReactions => Set<FarmActivityCommentReaction>();
     public DbSet<FarmActivityLike> FarmActivityLikes => Set<FarmActivityLike>();

@@ -15,4 +15,5 @@ public sealed class FarmActivityPost : AuditableEntity
     public int ShareCount { get; set; }
     public ICollection<FarmActivityComment> Comments { get; set; } = new List<FarmActivityComment>();
     public ICollection<FarmActivityLike> Likes { get; set; } = new List<FarmActivityLike>();
+    public ICollection<FarmActivityImage> Images { get; set; } = new List<FarmActivityImage>();
 }

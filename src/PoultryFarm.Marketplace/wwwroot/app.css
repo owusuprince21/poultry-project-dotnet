@@ -890,6 +890,161 @@ a.farm-card {
     color: var(--text);
 }
 
+.social-card-copy p.is-collapsed {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 7;
+    overflow: hidden;
+}
+
+.social-card-copy .social-see-more {
+    margin-top: 0.35rem;
+}
+
+.social-album {
+    display: grid;
+    gap: 3px;
+    background: #e5e7eb;
+    width: 100%;
+}
+
+.social-album button {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: #0f172a;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.social-album img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.social-album.count-1 {
+    grid-template-columns: 1fr;
+}
+
+.social-album.count-1 button {
+    height: auto;
+}
+
+.social-album.count-1 img {
+    height: auto;
+    max-height: 520px;
+    object-fit: cover;
+}
+
+.social-album.count-2 {
+    grid-template-columns: 1fr 1fr;
+    height: 320px;
+}
+
+.social-album.count-3 {
+    grid-template-columns: 1.4fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    height: 420px;
+}
+
+.social-album.count-3 > button:first-child {
+    grid-row: 1 / span 2;
+}
+
+.social-album.count-4 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    height: 420px;
+}
+
+.social-album.count-5 {
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: 1.15fr 1fr;
+    height: 460px;
+}
+
+.social-album.count-5 > button:nth-child(1),
+.social-album.count-5 > button:nth-child(2) {
+    grid-column: span 3;
+}
+
+.social-album.count-5 > button:nth-child(n + 3) {
+    grid-column: span 2;
+}
+
+.social-album-more {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(15, 23, 42, 0.55);
+    color: #fff;
+    font-size: 2rem;
+    font-weight: 800;
+}
+
+.social-viewer {
+    position: fixed;
+    inset: 0;
+    z-index: 320;
+    display: grid;
+    place-items: center;
+    background: rgba(15, 23, 42, 0.92);
+}
+
+.social-viewer img {
+    max-width: min(960px, calc(100vw - 7rem));
+    max-height: 86vh;
+    object-fit: contain;
+}
+
+.social-viewer-close,
+.social-viewer-nav {
+    position: absolute;
+    border: 0;
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    cursor: pointer;
+}
+
+.social-viewer-close {
+    top: 1rem;
+    right: 1rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 999px;
+    font-size: 1.6rem;
+    line-height: 1;
+}
+
+.social-viewer-nav {
+    top: 50%;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 999px;
+    font-size: 2rem;
+    line-height: 1;
+    transform: translateY(-50%);
+}
+
+.social-viewer-nav.is-prev { left: 1rem; }
+.social-viewer-nav.is-next { right: 1rem; }
+
+.social-viewer-count {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #fff;
+    font-weight: 700;
+}
+
 .social-card-media {
     background: #0f172a;
 }
@@ -1339,7 +1494,12 @@ html.social-dialog-open body {
     .social-feed-page { padding: 1rem 0.75rem 2.5rem; }
     .social-feed-intro { flex-direction: column; gap: 0.5rem; }
     .social-action { font-size: 0.86rem; }
-    .social-card-media img { max-height: 360px; }
+    .social-card-media img,
+    .social-album.count-1 img { max-height: 360px; }
+    .social-album.count-2,
+    .social-album.count-3,
+    .social-album.count-4,
+    .social-album.count-5 { height: 280px; }
 }
 
 .faq-list { display: grid; gap: 0.75rem; }

@@ -9,6 +9,7 @@ public sealed class MarketplaceConfiguration :
     IEntityTypeConfiguration<FarmerRegistration>,
     IEntityTypeConfiguration<MarketplaceListing>,
     IEntityTypeConfiguration<FarmActivityPost>,
+    IEntityTypeConfiguration<FarmActivityImage>,
     IEntityTypeConfiguration<FarmActivityComment>,
     IEntityTypeConfiguration<FarmActivityCommentReaction>,
     IEntityTypeConfiguration<FarmActivityLike>,
@@ -64,6 +65,16 @@ public sealed class MarketplaceConfiguration :
         builder.HasOne(x => x.Company).WithMany().HasForeignKey(x => x.CompanyId);
         builder.HasMany(x => x.Comments).WithOne(x => x.Post!).HasForeignKey(x => x.PostId);
         builder.HasMany(x => x.Likes).WithOne(x => x.Post!).HasForeignKey(x => x.PostId);
+        builder.HasMany(x => x.Images).WithOne(x => x.Post!).HasForeignKey(x => x.PostId);
+    }
+
+    public void Configure(EntityTypeBuilder<FarmActivityImage> builder)
+    {
+        builder.ToTable("FarmActivityImages");
+        builder.HasQueryFilter(x => !x.IsDeleted);
+        builder.Property(x => x.Url).HasMaxLength(1000).IsRequired();
+        builder.HasIndex(x => new { x.PostId, x.SortOrder });
+        builder.HasOne(x => x.Post).WithMany(x => x.Images).HasForeignKey(x => x.PostId);
     }
 
     public void Configure(EntityTypeBuilder<FarmActivityComment> builder)
