@@ -1583,6 +1583,283 @@ h1:focus {
     }
 }
 
+.farm-comments {
+    display: grid;
+    gap: 0.7rem;
+    margin-top: 0.35rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid #e5e7eb;
+}
+
+.farm-comments-empty {
+    margin: 0;
+    color: #64748b;
+    font-size: 0.9rem;
+}
+
+.farm-comment {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+}
+
+.farm-comment.is-reply {
+    margin-top: 0.55rem;
+}
+
+.farm-avatar {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    display: inline-grid;
+    place-items: center;
+    flex-shrink: 0;
+    background: linear-gradient(145deg, #dbeafe, #bfdbfe);
+    color: #1d4ed8;
+    font-size: 0.7rem;
+    font-weight: 800;
+}
+
+.farm-comment-main {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    gap: 0.35rem;
+}
+
+.farm-comment-bubble {
+    padding: 0.65rem 0.8rem;
+    border-radius: 14px;
+    background: #f1f5f9;
+}
+
+.farm-name-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.22rem;
+    max-width: 100%;
+}
+
+.farm-comment-bubble strong {
+    font-size: 0.86rem;
+}
+
+.farm-comment-bubble p {
+    margin: 0.2rem 0 0;
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+.farm-comment-bubble time {
+    display: block;
+    margin-top: 0.3rem;
+    color: #64748b;
+    font-size: 0.74rem;
+}
+
+.farm-verified {
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+.farm-verified svg {
+    width: 1.05rem;
+    height: 1.05rem;
+}
+
+.farm-comment-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    padding-left: 0.15rem;
+}
+
+.farm-reply-btn,
+.farm-see-more {
+    border: 0;
+    background: transparent;
+    color: #64748b;
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 700;
+    padding: 0.15rem 0.25rem;
+    cursor: pointer;
+}
+
+.farm-see-more {
+    justify-self: start;
+    padding: 0;
+    color: #2563eb;
+    font-size: 0.9rem;
+}
+
+.farm-see-more.is-inline {
+    margin-top: 0.15rem;
+    font-size: 0.82rem;
+}
+
+.farm-see-more.is-strong {
+    font-weight: 800;
+}
+
+.farm-reply-btn:hover,
+.farm-see-more:hover {
+    color: #1d4ed8;
+    text-decoration: underline;
+}
+
+.farm-reply-btn.is-danger {
+    color: #b91c1c;
+}
+
+.farm-replies {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 0.15rem;
+    padding-left: 0.35rem;
+    border-left: 2px solid #e5e7eb;
+}
+
+.farm-composer {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.farm-composer-label {
+    margin: 0;
+    color: #64748b;
+    font-size: 0.82rem;
+}
+
+.farm-composer textarea {
+    width: 100%;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 0.75rem 0.9rem;
+    font: inherit;
+    background: #fff;
+    color: #0f172a;
+    resize: vertical;
+}
+
+.farm-composer textarea:focus {
+    outline: 2px solid #bfdbfe;
+    border-color: #2563eb;
+}
+
+.farm-composer-foot {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.farm-post-btn {
+    border: 0;
+    border-radius: 8px;
+    background: #2563eb;
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    padding: 0.5rem 0.9rem;
+    cursor: pointer;
+}
+
+.farm-post-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.farm-dialog-backdrop {
+    position: fixed;
+    top: 4.5rem;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1400;
+    display: grid;
+    place-items: center;
+    padding: 1rem;
+    background: rgba(15, 23, 42, 0.48);
+}
+
+.farm-dialog {
+    width: min(560px, 100%);
+    max-height: min(760px, calc(100% - 0.5rem));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 16px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+}
+
+.farm-dialog-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem 1.1rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.farm-dialog-head strong,
+.farm-dialog-head span {
+    display: block;
+}
+
+.farm-dialog-head span {
+    margin-top: 0.15rem;
+    color: #64748b;
+    font-size: 0.84rem;
+}
+
+.farm-dialog-close {
+    width: 2rem;
+    height: 2rem;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.farm-dialog-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    display: grid;
+    gap: 0.85rem;
+    padding: 1rem 1.1rem;
+    background: #fcfcfd;
+}
+
+.farm-dialog-parent {
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.farm-dialog-foot {
+    padding: 0.85rem 1.1rem 1rem;
+    border-top: 1px solid #e5e7eb;
+    background: #fff;
+}
+
+@media (max-width: 640px) {
+    .farm-dialog-backdrop {
+        align-items: end;
+        padding: 0;
+    }
+
+    .farm-dialog {
+        max-height: 100%;
+        border-radius: 16px 16px 0 0;
+    }
+}
+
 .valid.modified:not([type=checkbox]) {
     outline: 1px solid #22c55e;
 }

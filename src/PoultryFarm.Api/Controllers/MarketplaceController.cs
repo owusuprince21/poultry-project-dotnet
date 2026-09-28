@@ -734,7 +734,7 @@ public sealed class MarketplaceController(
                 {
                     var replies = postComments
                         .Where(r => r.ParentCommentId == c.Id)
-                        .OrderByDescending(r => r.CreatedAt)
+                        .OrderBy(r => r.CreatedAt)
                         .Select(r => new FarmActivityCommentDto(
                             r.Id,
                             r.ParentCommentId,
@@ -1879,6 +1879,7 @@ public sealed class MarketplaceController(
                     root.Body,
                     root.CreatedAt,
                     rows.Where(reply => reply.ParentCommentId == root.Id)
+                        .OrderBy(reply => reply.CreatedAt)
                         .Select(reply => new FarmActivityManageCommentDto(
                             reply.Id,
                             reply.ParentCommentId,

@@ -267,7 +267,7 @@
                     }
                     else
                     {
-                        @foreach (var reply in NewestFirst(repliesParent.Replies))
+                        @foreach (var reply in OldestFirst(repliesParent.Replies))
                         {
                             @RenderComment(repliesPost, reply, isReply: true, compact: false, showReplies: false, threadRootId: repliesParent.Id)
                         }
@@ -540,17 +540,14 @@
                     </div>
                 </div>
 
-                @if (showReplies && !isReply && comment.Replies.Count == 1)
+                @if (showReplies && !isReply && comment.Replies.Count > 0)
                 {
                     <div class="social-replies">
-                        @RenderComment(post, comment.Replies[0], isReply: true, compact: compact, showReplies: false, threadRootId: comment.Id)
+                        @foreach (var reply in OldestFirst(comment.Replies))
+                        {
+                            @RenderComment(post, reply, isReply: true, compact: compact, showReplies: false, threadRootId: comment.Id)
+                        }
                     </div>
-                }
-                else if (showReplies && !isReply && comment.Replies.Count > 1)
-                {
-                    <button type="button" class="social-see-more is-inline is-strong" @onclick="() => OpenRepliesDialog(post.Id, comment.Id)">
-                        See all replies
-                    </button>
                 }
 
                 @if (_replyingTo == comment.Id)
@@ -745,6 +742,9 @@
 
     private static List<CommentDto> NewestFirst(IEnumerable<CommentDto> comments) =>
         comments.OrderByDescending(c => c.CreatedAt).ToList();
+
+    private static List<CommentDto> OldestFirst(IEnumerable<CommentDto> comments) =>
+        comments.OrderBy(c => c.CreatedAt).ToList();
 
     private static string FormatCount(int count)
     {
