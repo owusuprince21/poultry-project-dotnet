@@ -33,6 +33,11 @@ public sealed class CompaniesController(ApplicationDbContext dbContext, UserMana
             query = query.Where(x => x.Id == companyId);
         }
 
+        if (PermissionHelpers.IsSystemAdmin(User))
+        {
+            await CollapseDuplicateFarmsAsync(cancellationToken);
+        }
+
         var companies = await query
             .OrderBy(x => x.Name)
             .Select(x => new CompanyDto(x.Id, x.Name, x.Code, x.Email, x.Phone, x.Address, x.IsActive))
@@ -55,10 +60,16 @@ public sealed class CompaniesController(ApplicationDbContext dbContext, UserMana
             return BadRequest(new { name = "Company name is required." });
         }
 
+        var normalizedName = request.Name.Trim().ToLowerInvariant();
+        if (await dbContext.Companies.AnyAsync(x => x.Name.ToLower() == normalizedName, cancellationToken))
+        {
+            return BadRequest(new { name = "A farm with this name already exists." });
+        }
+
         var company = new Company
         {
             Name = request.Name.Trim(),
-            Code = GenerateCompanyCode(),
+            Code = await NextCompanyCodeAsync(cancellationToken),
             Email = request.Email?.Trim(),
             Phone = request.Phone?.Trim(),
             Address = request.Address?.Trim()
@@ -131,10 +142,9 @@ public sealed class CompaniesController(ApplicationDbContext dbContext, UserMana
         return Ok(new { detail = "Company deleted successfully." });
     }
 
-    private async Task<bool> HasLinkedDataAsync(Guid companyId, CancellationToken cancellationToken)
+    private async Task<bool> HasOperationalDataAsync(Guid companyId, CancellationToken cancellationToken)
     {
-        return await dbContext.Users.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
-            || await dbContext.Batches.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
+        return await dbContext.Batches.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
             || await dbContext.EggProductions.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
             || await dbContext.FeedConsumptions.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
             || await dbContext.FeedStocks.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
@@ -142,7 +152,88 @@ public sealed class CompaniesController(ApplicationDbContext dbContext, UserMana
             || await dbContext.BirdSales.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
             || await dbContext.BirdHealthEvents.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
             || await dbContext.Medications.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
-            || await dbContext.DebeakingSchedules.AnyAsync(x => x.CompanyId == companyId, cancellationToken);
+            || await dbContext.DebeakingSchedules.AnyAsync(x => x.CompanyId == companyId, cancellationToken)
+            || await dbContext.MarketplaceListings.AnyAsync(x => x.CompanyId == companyId, cancellationToken);
+    }
+
+    private async Task<bool> HasLinkedDataAsync(Guid companyId, CancellationToken cancellationToken)
+    {
+        return await dbContext.Users.AnyAsync(x => x.CompanyId == companyId && !x.IsDeleted, cancellationToken)
+            || await HasOperationalDataAsync(companyId, cancellationToken);
+    }
+
+    private async Task CollapseDuplicateFarmsAsync(CancellationToken cancellationToken)
+    {
+        var companies = await dbContext.Companies
+            .OrderBy(x => x.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        var changed = false;
+        foreach (var group in companies.GroupBy(x => x.Name.Trim().ToLowerInvariant()).Where(x => x.Count() > 1))
+        {
+            var members = group.ToList();
+            var ids = members.Select(x => x.Id).ToList();
+            var registrationCompanyIds = await dbContext.FarmerRegistrations
+                .AsNoTracking()
+                .Where(x => x.CompanyId != null && ids.Contains(x.CompanyId.Value))
+                .Select(x => x.CompanyId!.Value)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+            var userCounts = await dbContext.Users
+                .AsNoTracking()
+                .Where(x => x.CompanyId != null && ids.Contains(x.CompanyId.Value) && !x.IsDeleted)
+                .GroupBy(x => x.CompanyId!.Value)
+                .Select(x => new { CompanyId = x.Key, Count = x.Count() })
+                .ToListAsync(cancellationToken);
+
+            var keeper = members
+                .OrderByDescending(x => registrationCompanyIds.Contains(x.Id))
+                .ThenByDescending(x => userCounts.FirstOrDefault(count => count.CompanyId == x.Id)?.Count ?? 0)
+                .ThenBy(x => x.CreatedAt)
+                .First();
+
+            foreach (var extra in members.Where(x => x.Id != keeper.Id))
+            {
+                if (await HasOperationalDataAsync(extra.Id, cancellationToken))
+                {
+                    continue;
+                }
+
+                var users = await dbContext.Users.Where(x => x.CompanyId == extra.Id).ToListAsync(cancellationToken);
+                foreach (var user in users)
+                {
+                    user.CompanyId = keeper.Id;
+                }
+
+                var registrations = await dbContext.FarmerRegistrations.Where(x => x.CompanyId == extra.Id).ToListAsync(cancellationToken);
+                foreach (var registration in registrations)
+                {
+                    registration.CompanyId = keeper.Id;
+                }
+
+                extra.IsDeleted = true;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    private async Task<string> NextCompanyCodeAsync(CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var code = GenerateCompanyCode();
+            if (!await dbContext.Companies.AnyAsync(x => x.Code == code, cancellationToken))
+            {
+                return code;
+            }
+        }
+
+        return GenerateCompanyCode();
     }
 
     private static CompanyDto ToDto(Company company) =>

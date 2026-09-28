@@ -88,16 +88,13 @@
                     @Initials(_selectedContact)
                     <span class="presence-dot @(_selectedContact.IsOnline ? "online" : "offline")"></span>
                 </div>
-                <div>
-                    <MudText Typo="Typo.subtitle1" Class="font-semibold">@DisplayName(_selectedContact)</MudText>
-                    <MudText Typo="Typo.caption" Color="Color.Secondary">@ThreadHeaderSubtitle(_selectedContact)</MudText>
-                    @if (!string.IsNullOrWhiteSpace(_selectedContact.Email) || !string.IsNullOrWhiteSpace(_selectedContact.Phone))
-                    {
-                        <MudText Typo="Typo.caption" Color="Color.Secondary">@ContactDetailsLine(_selectedContact)</MudText>
-                    }
+                <div class="chat-thread-identity">
+                    <div class="chat-thread-name">@DisplayName(_selectedContact)</div>
+                    <div class="chat-thread-sub">@ThreadHeaderRoleLine(_selectedContact)</div>
+                    <div class="chat-thread-seen">@LastSeenText(_selectedContact)</div>
                     @if (_selectedContact.Role == "marketplace_buyer" && !_selectedContact.CanReply)
                     {
-                        <MudText Typo="Typo.caption" Color="Color.Warning">Read-only · Farm handles replies</MudText>
+                        <div class="chat-thread-seen">Read-only · Farm handles replies</div>
                     }
                 </div>
             </div>
@@ -756,17 +753,7 @@
 
             if (!string.IsNullOrWhiteSpace(contact.ListingTitle))
             {
-                parts.Add($"Listing · {contact.ListingTitle}");
-            }
-
-            if (!string.IsNullOrWhiteSpace(contact.Email))
-            {
-                parts.Add(contact.Email);
-            }
-
-            if (!string.IsNullOrWhiteSpace(contact.Phone))
-            {
-                parts.Add(contact.Phone);
+                parts.Add(contact.ListingTitle);
             }
 
             if (parts.Count > 0)
@@ -783,23 +770,26 @@
         return $"{DisplayRole(contact.Role)}{CompanySuffix(contact)}";
     }
 
-    private static string ThreadHeaderSubtitle(ChatContact contact) =>
-        $"{DisplayRole(contact.Role)}{CompanySuffix(contact)} • {LastSeenText(contact)}";
-
-    private static string ContactDetailsLine(ChatContact contact)
+    private static string ThreadHeaderRoleLine(ChatContact contact)
     {
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(contact.Email))
+        if (contact.Role == "marketplace_buyer")
         {
-            parts.Add(contact.Email);
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(contact.CompanyName))
+            {
+                parts.Add(contact.CompanyName);
+            }
+
+            if (!string.IsNullOrWhiteSpace(contact.ListingTitle))
+            {
+                parts.Add(contact.ListingTitle);
+            }
+
+            return parts.Count == 0 ? "Marketplace buyer" : string.Join(" · ", parts);
         }
 
-        if (!string.IsNullOrWhiteSpace(contact.Phone))
-        {
-            parts.Add(contact.Phone);
-        }
-
-        return string.Join(" · ", parts);
+        var role = DisplayRole(contact.Role);
+        return string.IsNullOrWhiteSpace(contact.CompanyName) ? role : $"{role} · {contact.CompanyName}";
     }
 
     private static string LastSeenText(ChatContact contact)

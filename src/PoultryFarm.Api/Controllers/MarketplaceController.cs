@@ -187,17 +187,24 @@ public sealed class MarketplaceController(
             registration.ContactLastName,
             cancellationToken);
 
-        var company = new Company
+        var normalizedFarmName = registration.FarmName.Trim().ToLowerInvariant();
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var company = await dbContext.Companies
+            .FirstOrDefaultAsync(x => x.Name.ToLower() == normalizedFarmName, cancellationToken);
+        if (company is null)
         {
-            Name = registration.FarmName,
-            Code = GenerateCompanyCode(),
-            Email = registration.Email,
-            Phone = registration.Phone,
-            Address = registration.Location,
-            IsActive = true
-        };
-        dbContext.Companies.Add(company);
-        await dbContext.SaveChangesAsync(cancellationToken);
+            company = new Company
+            {
+                Name = registration.FarmName.Trim(),
+                Code = await NextCompanyCodeAsync(cancellationToken),
+                Email = registration.Email,
+                Phone = registration.Phone,
+                Address = registration.Location,
+                IsActive = true
+            };
+            dbContext.Companies.Add(company);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
 
         var temporaryPassword = string.IsNullOrWhiteSpace(request.TemporaryPassword)
             ? GenerateTemporaryPassword()
@@ -219,6 +226,7 @@ public sealed class MarketplaceController(
         var createResult = await userManager.CreateAsync(farmAdmin, temporaryPassword);
         if (!createResult.Succeeded)
         {
+            await transaction.RollbackAsync(cancellationToken);
             return BadRequest(new { detail = createResult.Errors.Select(x => x.Description).ToArray() });
         }
 
@@ -234,6 +242,7 @@ public sealed class MarketplaceController(
         registration.FarmAdminUserId = farmAdmin.Id;
 
         await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         var farmAppBase = configuration["Apps:FarmBlazorBaseUrl"] ?? "http://localhost:5083";
         var inviteUrl = $"{farmAppBase.TrimEnd('/')}/setup-password?token={Uri.EscapeDataString(invite.RawToken)}";
@@ -2058,6 +2067,20 @@ public sealed class MarketplaceController(
     {
         const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         return new string(Enumerable.Range(0, 10).Select(_ => chars[Random.Shared.Next(chars.Length)]).ToArray());
+    }
+
+    private async Task<string> NextCompanyCodeAsync(CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var code = GenerateCompanyCode();
+            if (!await dbContext.Companies.AnyAsync(x => x.Code == code, cancellationToken))
+            {
+                return code;
+            }
+        }
+
+        return GenerateCompanyCode();
     }
 
     private async Task<string> CreateUniqueUsernameAsync(string firstName, string lastName, CancellationToken cancellationToken)
