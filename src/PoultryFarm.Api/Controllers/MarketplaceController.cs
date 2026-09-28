@@ -36,8 +36,44 @@ public sealed class MarketplaceController(
         "image/jpg",
         "image/png",
         "image/webp",
+        "image/avif",
         "image/gif"
     };
+
+    private static readonly HashSet<string> KnownImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".avif",
+        ".gif"
+    };
+
+    private static string? ResolveImageContentType(string? contentType, string? fileName)
+    {
+        if (!string.IsNullOrWhiteSpace(contentType) && AllowedImageContentTypes.Contains(contentType))
+        {
+            return contentType.Equals("image/jpg", StringComparison.OrdinalIgnoreCase) ? "image/jpeg" : contentType;
+        }
+
+        var extension = Path.GetExtension(fileName);
+        if (string.IsNullOrEmpty(extension))
+        {
+            return null;
+        }
+
+        return extension.ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            ".avif" => "image/avif",
+            ".gif" => "image/gif",
+            _ => null
+        };
+    }
+
     [AllowAnonymous]
     [HttpPost("registrations")]
     public async Task<ActionResult<FarmerRegistrationDto>> SubmitRegistration(
@@ -1428,21 +1464,23 @@ public sealed class MarketplaceController(
             return BadRequest(new { file = "Image must be 5 MB or smaller." });
         }
 
-        if (!AllowedImageContentTypes.Contains(file.ContentType))
+        var contentType = ResolveImageContentType(file.ContentType, file.FileName);
+        if (contentType is null)
         {
-            return BadRequest(new { file = "Only JPEG, PNG, WebP, or GIF images are allowed." });
+            return BadRequest(new { file = "Use a JPEG, PNG, WebP, AVIF, or GIF image." });
         }
 
         var targetFolder = string.Equals(folder, "activities", StringComparison.OrdinalIgnoreCase)
             ? "activities"
             : "listings";
         var extension = Path.GetExtension(file.FileName);
-        if (string.IsNullOrWhiteSpace(extension) || extension.Length > 10)
+        if (string.IsNullOrWhiteSpace(extension) || extension.Length > 10 || !KnownImageExtensions.Contains(extension))
         {
-            extension = file.ContentType switch
+            extension = contentType switch
             {
                 "image/png" => ".png",
                 "image/webp" => ".webp",
+                "image/avif" => ".avif",
                 "image/gif" => ".gif",
                 _ => ".jpg"
             };
@@ -1455,7 +1493,7 @@ public sealed class MarketplaceController(
         {
             Folder = targetFolder,
             FileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}",
-            ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+            ContentType = contentType,
             SizeBytes = memory.Length,
             Data = memory.ToArray(),
             CreatedByUserId = GetCurrentUserId()
@@ -1888,7 +1926,7 @@ public sealed class MarketplaceController(
         }
 
         var post = await dbContext.FarmActivityPosts
-            .Include(x => x.Images)
+            .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == id && x.CompanyId == companyId, cancellationToken);
         if (post is null)
         {
@@ -1914,47 +1952,55 @@ public sealed class MarketplaceController(
         }
 
         var mediaUrls = NormalizeActivityMedia(request.MediaUrls, request.MediaUrl);
-        post.Title = title;
-        post.Body = body;
-        post.MediaUrl = mediaUrls.FirstOrDefault();
-        post.UpdatedAt = DateTimeOffset.UtcNow;
-        post.UpdatedByUserId = userId;
+        var isPublished = request.PublishNow;
+        var publishedAt = post.PublishedAt;
         if (request.PublishNow)
         {
-            post.IsPublished = true;
-            post.PublishedAt ??= DateTimeOffset.UtcNow;
-        }
-        else
-        {
-            post.IsPublished = false;
+            publishedAt ??= DateTimeOffset.UtcNow;
         }
 
-        foreach (var image in post.Images)
-        {
-            image.IsDeleted = true;
-        }
+        var likeCount = await dbContext.FarmActivityLikes.CountAsync(x => x.PostId == id, cancellationToken);
+        var commentCount = await dbContext.FarmActivityComments.CountAsync(x => x.PostId == id, cancellationToken);
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await dbContext.FarmActivityPosts
+            .Where(x => x.Id == id && x.CompanyId == companyId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.Title, title)
+                .SetProperty(x => x.Body, body)
+                .SetProperty(x => x.MediaUrl, mediaUrls.FirstOrDefault())
+                .SetProperty(x => x.IsPublished, isPublished)
+                .SetProperty(x => x.PublishedAt, publishedAt)
+                .SetProperty(x => x.UpdatedAt, DateTimeOffset.UtcNow)
+                .SetProperty(x => x.UpdatedByUserId, userId), cancellationToken);
+
+        await dbContext.FarmActivityImages
+            .Where(x => x.PostId == id)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsDeleted, true), cancellationToken);
 
         for (var index = 0; index < mediaUrls.Count; index++)
         {
-            post.Images.Add(new FarmActivityImage
+            dbContext.FarmActivityImages.Add(new FarmActivityImage
             {
+                PostId = id,
                 Url = mediaUrls[index],
                 SortOrder = index
             });
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return Ok(new FarmActivityManageDto(
             post.Id,
-            post.Title,
-            post.Body,
-            post.MediaUrl,
-            post.IsPublished,
-            post.PublishedAt,
+            title,
+            body,
+            mediaUrls.FirstOrDefault(),
+            isPublished,
+            publishedAt,
             post.CreatedAt,
-            post.Likes.Count(l => !l.IsDeleted),
-            post.Comments.Count(c => !c.IsDeleted),
+            likeCount,
+            commentCount,
             post.ShareCount,
             mediaUrls,
             post.CreatedByUserId));
