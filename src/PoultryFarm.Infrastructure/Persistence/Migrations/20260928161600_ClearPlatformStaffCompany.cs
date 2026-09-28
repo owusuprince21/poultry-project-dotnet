@@ -8,8 +8,8 @@ namespace PoultryFarm.Infrastructure.Persistence.Migrations
 {
     /// <inheritdoc />
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260928161300_ClearSystemAdminCompany")]
-    public class ClearSystemAdminCompany : Migration
+    [Migration("20260928161600_ClearPlatformStaffCompany")]
+    public class ClearPlatformStaffCompany : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
