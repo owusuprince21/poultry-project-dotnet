@@ -862,9 +862,31 @@ a.farm-card {
     min-width: 0;
 }
 
+.social-name-row {
+    display: flex;
+    align-items: center;
+    gap: 0.28rem;
+    min-width: 0;
+}
+
 .social-card-meta strong {
+    min-width: 0;
+    overflow: hidden;
     font-size: 0.98rem;
     line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.social-verified {
+    display: inline-flex;
+    flex: 0 0 auto;
+    color: var(--primary);
+}
+
+.social-verified svg {
+    width: 1.05rem;
+    height: 1.05rem;
 }
 
 .social-card-meta span {

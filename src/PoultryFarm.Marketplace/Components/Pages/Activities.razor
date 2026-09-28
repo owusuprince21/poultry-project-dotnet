@@ -40,7 +40,14 @@
                         <header class="social-card-head">
                             <div class="social-avatar" aria-hidden="true">@Initials(post.FarmName)</div>
                             <div class="social-card-meta">
-                                <strong>@post.FarmName</strong>
+                                <div class="social-name-row">
+                                    <strong>@post.FarmName</strong>
+                                    <span class="social-verified" title="Verified farm" aria-label="Verified farm">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                            <path fill="currentColor" d="M12 2.5 14.1 4l2.5-.4 1.1 2.3 2.3 1.1-.4 2.5L22 12l-2.4 1.5.4 2.5-2.3 1.1-1.1 2.3-2.5-.4L12 21.5 9.9 20l-2.5.4-1.1-2.3-2.3-1.1.4-2.5L2 12l2.4-1.5-.4-2.5 2.3-1.1 1.1-2.3 2.5.4L12 2.5Zm-1.2 12.1 4.9-4.9-1.4-1.4-3.5 3.5-1.6-1.6-1.4 1.4 3 3Z" />
+                                        </svg>
+                                    </span>
+                                </div>
                                 <span>@(post.PublishedAt?.ToLocalTime().ToString("d MMM yyyy · h:mm tt") ?? "Just now")</span>
                             </div>
                         </header>
