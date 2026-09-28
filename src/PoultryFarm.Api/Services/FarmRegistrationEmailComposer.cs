@@ -18,7 +18,7 @@ public static class FarmRegistrationEmailComposer
             $"""
             Hi {firstName},
 
-            Good news — your Akokɔ Papa farm registration for {farm} has been approved.
+            Good news — your Poultry Zone farm registration for {farm} has been approved.
 
             Username: {username}
 
@@ -29,7 +29,7 @@ public static class FarmRegistrationEmailComposer
 
             If you did not apply for marketplace access, you can ignore this email.
 
-            — Akokɔ Papa
+            — Poultry Zone
             """;
 
         var html =
@@ -38,7 +38,7 @@ public static class FarmRegistrationEmailComposer
               <h1 style="font-size:22px;margin:0 0 12px;">Your farm application was approved</h1>
               <p style="margin:0 0 12px;">Hi {System.Net.WebUtility.HtmlEncode(firstName)},</p>
               <p style="margin:0 0 12px;">
-                Your Akokɔ Papa registration for
+                Your Poultry Zone registration for
                 <strong>{System.Net.WebUtility.HtmlEncode(farm)}</strong>
                 has been approved. You can now set your password and sign in to the farm dashboard.
               </p>
@@ -60,7 +60,7 @@ public static class FarmRegistrationEmailComposer
               <p style="margin:16px 0 0;font-size:13px;color:#64748b;">
                 This invitation expires on {System.Net.WebUtility.HtmlEncode(expiresLocal)}.
               </p>
-              <p style="margin:18px 0 0;font-size:13px;color:#64748b;">— Akokɔ Papa</p>
+              <p style="margin:18px 0 0;font-size:13px;color:#64748b;">— Poultry Zone</p>
             </div>
             """;
 

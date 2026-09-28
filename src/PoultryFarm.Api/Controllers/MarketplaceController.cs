@@ -556,7 +556,7 @@ public sealed class MarketplaceController(
             return "Verified poultry farm offering bird batches.";
         }
 
-        return "Verified poultry farm on Akokɔ Papa.";
+        return "Verified poultry farm on Poultry Zone.";
     }
 
     private static string? FirstNonEmpty(params string?[] values) =>

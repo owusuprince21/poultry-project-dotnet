@@ -9,14 +9,14 @@
 @inject PersistentComponentState ApplicationState
 @implements IAsyncDisposable
 
-<section class="hero-carousel" aria-label="Akokɔ Papa highlights">
+<section class="hero-carousel" aria-label="Poultry Zone highlights">
     @for (var i = 0; i < _slides.Length; i++)
     {
         var slide = _slides[i];
         <div class="hero-slide @(_slideIndex == i ? "active" : null)"
              style="@($"background-image: linear-gradient(180deg, rgba(15, 23, 42, 0.28), rgba(15, 23, 42, 0.78)), url('{slide.ImageUrl}');")">
             <div class="hero-inner">
-                <span class="hero-badge">Akokɔ Papa</span>
+                <span class="hero-badge">Poultry Zone</span>
                 <h1>@slide.Title</h1>
                 <p class="hero-copy">@slide.Copy</p>
                 <div class="hero-actions">
@@ -99,7 +99,7 @@
             <div class="section-head">
                 <div>
                     <h2>Featured farms</h2>
-                    <p>Approved farms that are live on Akokɔ Papa.</p>
+                    <p>Approved farms that are live on Poultry Zone.</p>
                 </div>
                 <div class="farm-carousel-actions">
                     <button type="button" class="hero-nav" @onclick="PrevFarm" aria-label="Previous farms">‹</button>
@@ -194,7 +194,7 @@
     <div class="section">
         <div class="section-head">
             <div>
-                <h2>Latest from Akokɔ Papa</h2>
+                <h2>Latest from Poultry Zone</h2>
                 <p>Published eggs and birds from approved farms.</p>
             </div>
             <div class="filter-row compact">
@@ -251,7 +251,7 @@
 <section class="section-band">
     <div class="section how-grid">
         <div>
-            <h2>How Akokɔ Papa works</h2>
+            <h2>How Poultry Zone works</h2>
             <p class="section-intro">Simple for buyers. Controlled for farms.</p>
         </div>
         <ol class="how-steps">
@@ -275,7 +275,7 @@
     <div class="section">
         <div class="promo-banner">
             <div>
-                <h2>Farm owners: sell with Akokɔ Papa</h2>
+                <h2>Farm owners: sell with Poultry Zone</h2>
                 <p>
                     Apply once, get reviewed by a super admin, set your password, then publish eggs,
                     bird batches, and farm updates from your dashboard.
@@ -324,7 +324,7 @@
                 <p>No. Browse publicly and send an inquiry with your contact details.</p>
             </details>
             <details>
-                <summary>Who can sell on Akokɔ Papa?</summary>
+                <summary>Who can sell on Poultry Zone?</summary>
                 <p>Only farms approved by a super admin after registration review.</p>
             </details>
             <details>
@@ -350,11 +350,11 @@
     private readonly HeroSlide[] _slides =
     [
         new("Fresh eggs from trusted Ghanaian farms",
-            "Browse live egg inventory, send an inquiry, and buy from verified sellers on Akokɔ Papa.",
+            "Browse live egg inventory, send an inquiry, and buy from verified sellers on Poultry Zone.",
             "/catalog", "Browse catalog", "/apply", "Register Your Farm",
             "/hero-eggs.jpg"),
         new("Bird batches ready for serious buyers",
-            "When farms mark batches for sale, they can push birds onto Akokɔ Papa for inquiry-based deals.",
+            "When farms mark batches for sale, they can push birds onto Poultry Zone for inquiry-based deals.",
             "/catalog?type=Birds", "View bird offers", "/activities", "See farm updates",
             "/hero-birds.jpg"),
         new("Farm owners: get approved, then sell",

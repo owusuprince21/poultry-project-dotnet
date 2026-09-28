@@ -25,7 +25,7 @@ public sealed class ResendEmailSender(
         }
 
         var fromEmail = configuration["Resend:FromEmail"] ?? "onboarding@resend.dev";
-        var fromName = configuration["Resend:FromName"] ?? "Akokɔ Papa";
+        var fromName = configuration["Resend:FromName"] ?? "Poultry Zone";
         var from = $"{fromName} <{fromEmail}>";
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "emails");
