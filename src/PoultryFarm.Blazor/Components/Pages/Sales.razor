@@ -6,6 +6,7 @@
 @using PoultryFarm.Blazor.Components.UI.Shared
 
 @inject AuthSession AuthSession
+@inject IConfiguration Configuration
 @inject IHttpClientFactory HttpClientFactory
 @inject ISnackbar Snackbar
 @inject NavigationManager Navigation
@@ -573,9 +574,8 @@
         _loadingReceipt = true;
         try
         {
-            var client = CreateApiClient();
             var receiptPath = WithCompany($"/api/sales/eggs/{saleId}/receipt.pdf");
-            var pdfUrl = new Uri(client.BaseAddress!, receiptPath).ToString();
+            var pdfUrl = $"{BrowserApiBase()}{receiptPath}";
             await RevokeReceiptPdfUrlAsync();
             _receiptPdfUrl = await JSRuntime.InvokeAsync<string>("poultryFarmUi.loadAuthenticatedPdfObjectUrl", pdfUrl, AuthSession.Token);
             _receiptPdfFileName = string.IsNullOrWhiteSpace(receiptId) ? "receipt.pdf" : $"{receiptId}.pdf";
@@ -617,6 +617,17 @@
         {
             _saving = false;
         }
+    }
+
+    private string BrowserApiBase()
+    {
+        var configured = Configuration["Api:PublicBaseUrl"];
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            configured = Configuration["Api:BaseUrl"];
+        }
+
+        return (configured ?? Navigation.BaseUri).TrimEnd('/');
     }
 
     private HttpClient CreateApiClient()

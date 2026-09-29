@@ -33,10 +33,10 @@ public sealed class SalesController(ApplicationDbContext dbContext, UserManager<
             productionQuery = productionQuery.Where(x => x.CompanyId == companyId.Value);
         }
 
-        var produced = await productionQuery.GroupBy(_ => 1).Select(g => new
+        var produced = (await productionQuery.GroupBy(_ => 1).Select(g => new
         {
             small = g.Sum(x => x.SmallEggs), medium = g.Sum(x => x.MediumEggs), large = g.Sum(x => x.LargeEggs), jumbo = g.Sum(x => x.ExtraLargeEggs), unsorted = g.Sum(x => x.UnsortedEggs)
-        }).FirstOrDefaultAsync(cancellationToken);
+        }).ToListAsync(cancellationToken)).FirstOrDefault();
         var soldQuery = dbContext.EggSaleItems.Where(x => x.EggSale != null);
         if (companyId.HasValue)
         {
@@ -490,7 +490,7 @@ public sealed class SalesController(ApplicationDbContext dbContext, UserManager<
 
     private async Task<Dictionary<EggSize, int>> GetAvailableEggsBySizeAsync(Guid companyId, CancellationToken cancellationToken)
     {
-        var produced = await dbContext.EggProductions
+        var producedRows = await dbContext.EggProductions
             .Where(x => x.CompanyId == companyId)
             .GroupBy(_ => 1)
             .Select(g => new
@@ -501,7 +501,8 @@ public sealed class SalesController(ApplicationDbContext dbContext, UserManager<
                 jumbo = g.Sum(x => x.ExtraLargeEggs),
                 unsorted = g.Sum(x => x.UnsortedEggs)
             })
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
+        var produced = producedRows.FirstOrDefault();
 
         var sold = await dbContext.EggSaleItems
             .Where(x => x.EggSale != null && x.EggSale.CompanyId == companyId)

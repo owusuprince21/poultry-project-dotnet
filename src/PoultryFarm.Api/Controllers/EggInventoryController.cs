@@ -33,7 +33,7 @@ public sealed class EggInventoryController(IApplicationDbContext dbContext) : Co
 
         foreach (var variant in variants)
         {
-            var produced = await dbContext.EggProductions
+            var produced = (await dbContext.EggProductions
                 .Where(x => x.BatchVariantId == variant.Id)
                 .GroupBy(_ => 1)
                 .Select(g => new
@@ -44,7 +44,7 @@ public sealed class EggInventoryController(IApplicationDbContext dbContext) : Co
                     extra_large = g.Sum(x => x.ExtraLargeEggs),
                     unsorted = g.Sum(x => x.UnsortedEggs)
                 })
-                .FirstOrDefaultAsync(cancellationToken);
+                .ToListAsync(cancellationToken)).FirstOrDefault();
 
             var sold = await dbContext.EggSaleItems
                 .Where(x => x.BatchVariantId == variant.Id)

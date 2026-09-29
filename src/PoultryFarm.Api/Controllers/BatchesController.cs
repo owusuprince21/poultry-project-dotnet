@@ -368,7 +368,7 @@ public sealed class BatchesController(
 
     private async Task<EggStock> EggStockForVariant(Guid variantId, CancellationToken cancellationToken)
     {
-        var produced = await dbContext.EggProductions
+        var produced = (await dbContext.EggProductions
             .Where(x => x.BatchVariantId == variantId)
             .GroupBy(_ => 1)
             .Select(g => new EggStock(
@@ -377,7 +377,7 @@ public sealed class BatchesController(
                 g.Sum(x => x.LargeEggs),
                 g.Sum(x => x.ExtraLargeEggs),
                 g.Sum(x => x.UnsortedEggs)))
-            .FirstOrDefaultAsync(cancellationToken) ?? new EggStock(0, 0, 0, 0, 0);
+            .ToListAsync(cancellationToken)).FirstOrDefault() ?? new EggStock(0, 0, 0, 0, 0);
 
         var sold = await dbContext.EggSaleItems
             .Where(x => x.BatchVariantId == variantId)

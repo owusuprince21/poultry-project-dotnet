@@ -123,7 +123,7 @@ Current egg inventory:
             return new EggStockSummary(0, 0, 0, 0, 0);
         }
 
-        var produced = await dbContext.EggProductions
+        var produced = (await dbContext.EggProductions
             .AsNoTracking()
             .Where(x => variants.Contains(x.BatchVariantId))
             .GroupBy(_ => 1)
@@ -133,7 +133,7 @@ Current egg inventory:
                 g.Sum(x => x.LargeEggs),
                 g.Sum(x => x.ExtraLargeEggs),
                 g.Sum(x => x.UnsortedEggs)))
-            .FirstOrDefaultAsync(cancellationToken) ?? new EggStockSummary(0, 0, 0, 0, 0);
+            .ToListAsync(cancellationToken)).FirstOrDefault() ?? new EggStockSummary(0, 0, 0, 0, 0);
 
         var sold = await dbContext.EggSaleItems
             .AsNoTracking()
