@@ -58,7 +58,15 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         base.OnModelCreating(builder);
         builder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
         ConfigureIdentity(builder);
-        ConfigurePostgreSqlConcurrency(builder);
+        if (Database.IsNpgsql())
+        {
+            ConfigurePostgreSqlConcurrency(builder);
+        }
+        else if (Database.IsSqlServer())
+        {
+            ConfigureSqlServerConcurrency(builder);
+            builder.Entity<ChatMessage>().Property(x => x.Body).HasColumnType("nvarchar(max)");
+        }
 
         foreach (var foreignKey in builder.Model.GetEntityTypes().SelectMany(e => e.GetForeignKeys()))
         {
@@ -86,6 +94,21 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
                 .HasColumnType("xid")
                 .ValueGeneratedOnAddOrUpdate()
                 .IsConcurrencyToken();
+        }
+    }
+
+    private static void ConfigureSqlServerConcurrency(ModelBuilder builder)
+    {
+        foreach (var entityType in builder.Model.GetEntityTypes())
+        {
+            if (entityType.ClrType is null || !typeof(AuditableEntity).IsAssignableFrom(entityType.ClrType))
+            {
+                continue;
+            }
+
+            builder.Entity(entityType.ClrType)
+                .Property(nameof(AuditableEntity.RowVersion))
+                .IsRowVersion();
         }
     }
 

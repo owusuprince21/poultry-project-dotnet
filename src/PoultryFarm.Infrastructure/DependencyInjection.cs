@@ -16,16 +16,26 @@ public static class DependencyInjection
     {
         var connectionString = configuration.GetConnectionString("DefaultConnection")
             ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is missing.");
+        var provider = configuration["Database:Provider"] ?? "Postgres";
 
         services.AddDbContext<ApplicationDbContext>(options =>
-            options
-                .UseNpgsql(connectionString, npgsql =>
+        {
+            if (provider.Equals("SqlServer", StringComparison.OrdinalIgnoreCase))
+            {
+                options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure(5));
+            }
+            else
+            {
+                options.UseNpgsql(connectionString, npgsql =>
                 {
                     npgsql.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
                     npgsql.EnableRetryOnFailure(5);
-                })
-                .ConfigureWarnings(warnings =>
-                    warnings.Ignore(RelationalEventId.PendingModelChangesWarning)));
+                });
+            }
+
+            options.ConfigureWarnings(warnings =>
+                warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
+        });
 
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped<IDateTimeProvider, DateTimeProvider>();

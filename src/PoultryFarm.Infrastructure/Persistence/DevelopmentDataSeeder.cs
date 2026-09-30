@@ -15,6 +15,13 @@ public static class DevelopmentDataSeeder
     {
         using var scope = services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        if (dbContext.Database.IsSqlServer())
+        {
+            var strategy = dbContext.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(() => dbContext.Database.EnsureCreatedAsync());
+            return;
+        }
+
         await dbContext.Database.MigrateAsync();
     }
 
@@ -24,8 +31,6 @@ public static class DevelopmentDataSeeder
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
-
-        await dbContext.Database.MigrateAsync();
 
         foreach (var role in new[] { "SystemAdmin", "SubAdmin", "Admin", "Worker" })
         {

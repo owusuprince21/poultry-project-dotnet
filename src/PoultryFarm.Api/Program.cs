@@ -138,7 +138,15 @@ builder.Services
         };
     });
 builder.Services.AddAuthorization();
-builder.Services.AddHealthChecks().AddNpgSql(connectionString, name: "postgres");
+var healthChecks = builder.Services.AddHealthChecks();
+if (string.Equals(builder.Configuration["Database:Provider"], "SqlServer", StringComparison.OrdinalIgnoreCase))
+{
+    healthChecks.AddSqlServer(connectionString, name: "sqlserver");
+}
+else
+{
+    healthChecks.AddNpgSql(connectionString, name: "postgres");
+}
 
 var app = builder.Build();
 
