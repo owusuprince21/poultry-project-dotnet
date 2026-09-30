@@ -1,0 +1,320 @@
+@page "/daily-summary"
+@using System.Net.Http.Headers
+@using PoultryFarm.Blazor.Services
+
+@inject AuthSession AuthSession
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Daily Summary Report</PageTitle>
+
+<ModulePageShell Title="Daily Summary Report" Subtitle="@Subtitle">
+    <MudPaper Elevation="0" Class="work-surface pa-4 mb-4">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="4">
+                <MudDatePicker Label="Report date" Date="_date" DateChanged="OnDateChanged" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" md="8" Class="d-flex align-center">
+                <MudText Typo="Typo.body2" Color="Color.Secondary">@Narrative</MudText>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="3">
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Eggs" Value="@((_summary?.TotalEggs ?? 0).ToString("N0"))" Detail="@EggPeriodDetail" Icon="@Icons.Material.Filled.Egg" Color="Color.Success" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Feed" Value="@($"{(_summary?.TotalFeedKg ?? 0):N1} kg")" Detail="@FeedPeriodDetail" Icon="@Icons.Material.Filled.Restaurant" Color="Color.Warning" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Bird health" Value="@(((_summary?.SickBirds ?? 0) + (_summary?.DeadBirds ?? 0)).ToString("N0"))" Detail="@($"{(_summary?.SickBirds ?? 0):N0} sick, {(_summary?.DeadBirds ?? 0):N0} dead")" Icon="@Icons.Material.Filled.HealthAndSafety" Color="Color.Error" />
+        </MudItem>
+        <MudItem xs="12" sm="6" lg="3">
+            <DashboardMetricCard Label="Sales" Value="@($"GHS {((_summary?.EggSalesTotal ?? 0) + (_summary?.BirdSalesTotal ?? 0)):N2}")" Detail="@($"Eggs GHS {(_summary?.EggSalesTotal ?? 0):N2}, birds GHS {(_summary?.BirdSalesTotal ?? 0):N2}")" Icon="@Icons.Material.Filled.PointOfSale" Color="Color.Primary" />
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Elevation="0" Class="work-surface pa-4 mt-4">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+            <div>
+                <MudText Typo="Typo.h6" Class="font-semibold">Egg collections</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Morning, afternoon, and evening counts for this date.</MudText>
+            </div>
+            <MudButton Variant="Variant.Text" Color="Color.Primary" Href="/production">Open egg production</MudButton>
+        </MudStack>
+        <TableExportBar Title="Daily summary"
+                        FileName="@ExportFileName"
+                        Subtitle="@Narrative"
+                        Disabled="@(!HasRows)"
+                        GetPayload="BuildExport" />
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Class="my-2" />
+        }
+        else if (_summary?.Eggs.Count is not > 0)
+        {
+            <EmptyState Icon="@Icons.Material.Filled.Egg" Title="No egg collections" Description="No egg production was recorded for this date." />
+        }
+        else
+        {
+            <MudTable Items="_summary.Eggs" Dense="true" Hover="true" Elevation="0">
+                <HeaderContent>
+                    <MudTh>Part of day</MudTh>
+                    <MudTh>Batch</MudTh>
+                    <MudTh>Bird color</MudTh>
+                    <MudTh>Type</MudTh>
+                    <MudTh>Eggs</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Period</MudTd>
+                    <MudTd>@context.BatchNumber</MudTd>
+                    <MudTd>@context.BirdColor</MudTd>
+                    <MudTd>@context.CollectionType</MudTd>
+                    <MudTd>@context.Eggs.ToString("N0")</MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudPaper>
+
+    <MudGrid Spacing="3" Class="mt-1">
+        <MudItem xs="12" lg="6">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <MudText Typo="Typo.h6" Class="font-semibold">Feed used</MudText>
+                    <MudButton Variant="Variant.Text" Color="Color.Primary" Href="/feed">Open feed</MudButton>
+                </MudStack>
+                @if (_summary?.Feed.Count is not > 0)
+                {
+                    <EmptyState Icon="@Icons.Material.Filled.Restaurant" Title="No feed recorded" Description="No feed consumption was recorded for this date." />
+                }
+                else
+                {
+                    <MudTable Items="_summary.Feed" Dense="true" Hover="true" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>Part of day</MudTh>
+                            <MudTh>Batch</MudTh>
+                            <MudTh>Feed</MudTh>
+                            <MudTh>Kg</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Period</MudTd>
+                            <MudTd>@context.BatchNumber</MudTd>
+                            <MudTd>@context.FeedType (@context.BagsUsed.ToString("N0") x @context.BagSizeKg kg)</MudTd>
+                            <MudTd>@context.TotalKg.ToString("N1")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" lg="6">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <MudText Typo="Typo.h6" Class="font-semibold">Bird health</MudText>
+                    <MudButton Variant="Variant.Text" Color="Color.Primary" Href="/health">Open bird health</MudButton>
+                </MudStack>
+                @if (_summary?.Health.Count is not > 0)
+                {
+                    <EmptyState Icon="@Icons.Material.Filled.HealthAndSafety" Title="No health records" Description="No sick or dead birds were recorded for this date." />
+                }
+                else
+                {
+                    <MudTable Items="_summary.Health" Dense="true" Hover="true" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>Batch</MudTh>
+                            <MudTh>Color</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Birds</MudTh>
+                            <MudTh>Cause</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.BatchNumber</MudTd>
+                            <MudTd>@context.BirdColor</MudTd>
+                            <MudTd>@context.Status</MudTd>
+                            <MudTd>@context.Count.ToString("N0")</MudTd>
+                            <MudTd>@(string.IsNullOrWhiteSpace(context.Cause) ? "—" : context.Cause)</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12">
+            <MudPaper Elevation="0" Class="work-surface pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <MudText Typo="Typo.h6" Class="font-semibold">Sales</MudText>
+                    <MudButton Variant="Variant.Text" Color="Color.Primary" Href="/sales">Open sales</MudButton>
+                </MudStack>
+                @if (_summary?.Sales.Count is not > 0)
+                {
+                    <EmptyState Icon="@Icons.Material.Filled.PointOfSale" Title="No sales" Description="No egg or bird sales were recorded for this date." />
+                }
+                else
+                {
+                    <MudTable Items="_summary.Sales" Dense="true" Hover="true" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>Kind</MudTh>
+                            <MudTh>Buyer</MudTh>
+                            <MudTh>Detail</MudTh>
+                            <MudTh>Amount</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Kind</MudTd>
+                            <MudTd>@context.Buyer</MudTd>
+                            <MudTd>@context.Detail</MudTd>
+                            <MudTd>GHS @context.Amount.ToString("N2")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</ModulePageShell>
+
+@code {
+    private DateTime? _date = DateTime.Today;
+    private DailySummaryReport? _summary;
+    private bool _loading;
+
+    private string Subtitle => _date is null
+        ? "One-day handover of eggs, feed, bird health, and sales."
+        : $"One-day handover for {_date:MMMM d, yyyy}.";
+
+    private string Narrative
+    {
+        get
+        {
+            if (_summary is null)
+            {
+                return "Choose a date to load the farm's recorded work.";
+            }
+
+            return $"{_summary.Date:MMMM d, yyyy}: {_summary.TotalEggs:N0} eggs, {_summary.TotalFeedKg:N1} kg feed, {_summary.SickBirds:N0} sick, {_summary.DeadBirds:N0} dead, and GHS {(_summary.EggSalesTotal + _summary.BirdSalesTotal):N2} in sales.";
+        }
+    }
+
+    private string EggPeriodDetail => _summary is null
+        ? "morning, afternoon, evening"
+        : $"Morning {_summary.MorningEggs:N0}, afternoon {_summary.AfternoonEggs:N0}, evening {_summary.EveningEggs:N0}";
+
+    private string FeedPeriodDetail => _summary is null
+        ? "morning, afternoon, evening"
+        : $"Morning {_summary.MorningFeedKg:N1}, afternoon {_summary.AfternoonFeedKg:N1}, evening {_summary.EveningFeedKg:N1} kg";
+
+    private bool HasRows =>
+        (_summary?.Eggs.Count ?? 0) + (_summary?.Feed.Count ?? 0) + (_summary?.Health.Count ?? 0) + (_summary?.Sales.Count ?? 0) > 0;
+
+    private string ExportFileName => $"daily-summary-{(_date ?? DateTime.Today):yyyy-MM-dd}";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await AuthSession.LoadAsync();
+        if (!AuthSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/", true);
+            return;
+        }
+
+        if (AuthSession.MustChangePassword)
+        {
+            Navigation.NavigateTo("/force-password-change", replace: true);
+            return;
+        }
+
+        if (!AuthSession.CanAccessPage("daily-summary"))
+        {
+            Navigation.NavigateTo("/dashboard", replace: true);
+            return;
+        }
+
+        await LoadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnDateChanged(DateTime? date)
+    {
+        _date = date;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_date is null)
+        {
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            var day = DateOnly.FromDateTime(_date.Value);
+            var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
+            _summary = await client.GetFromJsonAsync<DailySummaryReport>($"/api/reports/daily?date={day:yyyy-MM-dd}");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Daily summary could not load: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private TableExportPayload BuildExport()
+    {
+        var headers = new[] { "Section", "Part of day", "Batch", "Detail", "Quantity", "Amount" };
+        var rows = new List<IReadOnlyList<string>>();
+        foreach (var egg in _summary?.Eggs ?? [])
+        {
+            rows.Add(["Eggs", egg.Period, egg.BatchNumber, $"{egg.BirdColor} {egg.CollectionType}", egg.Eggs.ToString("N0"), ""]);
+        }
+
+        foreach (var item in _summary?.Feed ?? [])
+        {
+            rows.Add(["Feed", item.Period, item.BatchNumber, item.FeedType, $"{item.TotalKg:N1} kg", ""]);
+        }
+
+        foreach (var item in _summary?.Health ?? [])
+        {
+            rows.Add(["Health", "", item.BatchNumber, $"{item.Status} {item.BirdColor}", item.Count.ToString("N0"), item.Cause ?? ""]);
+        }
+
+        foreach (var item in _summary?.Sales ?? [])
+        {
+            rows.Add(["Sales", "", item.Kind, $"{item.Buyer} — {item.Detail}", "", $"GHS {item.Amount:N2}"]);
+        }
+
+        return new TableExportPayload("Daily Summary Report", headers, rows, Narrative);
+    }
+
+    private sealed record DailySummaryReport(
+        DateOnly Date,
+        int TotalEggs,
+        int MorningEggs,
+        int AfternoonEggs,
+        int EveningEggs,
+        decimal TotalFeedKg,
+        decimal MorningFeedKg,
+        decimal AfternoonFeedKg,
+        decimal EveningFeedKg,
+        int SickBirds,
+        int DeadBirds,
+        decimal EggSalesTotal,
+        decimal BirdSalesTotal,
+        List<DailyEggLine> Eggs,
+        List<DailyFeedLine> Feed,
+        List<DailyHealthLine> Health,
+        List<DailySaleLine> Sales);
+
+    private sealed record DailyEggLine(string Period, string BatchNumber, string BirdColor, string CollectionType, int Eggs);
+    private sealed record DailyFeedLine(string Period, string BatchNumber, string FeedType, int BagsUsed, int BagSizeKg, decimal TotalKg);
+    private sealed record DailyHealthLine(string BatchNumber, string BirdColor, string Status, int Count, string? Cause);
+    private sealed record DailySaleLine(string Kind, string Buyer, string Detail, decimal Amount);
+}
