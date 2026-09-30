@@ -118,7 +118,13 @@ public sealed class ReportsController(
         dbContext.DailyObservations.Add(observation);
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var detail = $"{author} recorded a {categoryLabel.ToLowerInvariant()} for {request.Date:yyyy-MM-dd}. Observation: {Trim(notes, 500)} What to do: {Trim(recommendation, 2800)}";
+        var detail = $"""
+            Observation:
+            {Trim(notes, 700)}
+
+            What to do:
+            {Trim(AdviceOnly(recommendation), 2500)}
+            """;
         if (detail.Length > 4000)
         {
             detail = detail[..4000];
@@ -152,7 +158,21 @@ public sealed class ReportsController(
         };
 
     private static string Trim(string value, int max) =>
-        value.Length <= max ? value : value[..max] + "...";
+        value.Length <= max ? value.Trim() : value.Trim()[..max] + "...";
+
+    private static string AdviceOnly(string recommendation)
+    {
+        var text = recommendation.Trim();
+        var repeat = text.IndexOf("Observation:", StringComparison.OrdinalIgnoreCase);
+        if (repeat > 0)
+        {
+            text = text[..repeat].Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(text)
+            ? "Check the flock, separate anything that looks abnormal, and review today's feed and medication schedule before the next round."
+            : text;
+    }
 
     private async Task<Guid?> CompanyIdAsync()
     {

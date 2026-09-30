@@ -77,10 +77,31 @@
                     @if (_selectedNotification is not null)
                     {
                         <div class="notification-detail">
-                            <MudIcon Icon="@NotificationIcon(_selectedNotification.Kind)" Color="@NotificationColor(_selectedNotification.Kind)" />
-                            <MudText Typo="Typo.subtitle1" Class="font-semibold">@_selectedNotification.Title</MudText>
-                            <MudText Typo="Typo.caption" Color="Color.Secondary">@_selectedNotification.Actor</MudText>
-                            <MudText Typo="Typo.body2">@_selectedNotification.Detail</MudText>
+                            <div class="notification-detail-heading">
+                                <MudIcon Icon="@NotificationIcon(_selectedNotification.Kind)" Color="@NotificationColor(_selectedNotification.Kind)" />
+                                <div>
+                                    <MudText Typo="Typo.subtitle1" Class="font-semibold">@_selectedNotification.Title</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@_selectedNotification.Actor</MudText>
+                                </div>
+                            </div>
+                            @{
+                                var sections = SplitNotificationDetail(_selectedNotification.Detail);
+                            }
+                            @if (sections.Observation is not null && sections.Advice is not null)
+                            {
+                                <div class="notification-section">
+                                    <MudText Typo="Typo.caption" Class="notification-section-label">Observation</MudText>
+                                    <MudText Typo="Typo.body2" Class="notification-detail-body">@sections.Observation</MudText>
+                                </div>
+                                <div class="notification-section">
+                                    <MudText Typo="Typo.caption" Class="notification-section-label">What to do</MudText>
+                                    <MudText Typo="Typo.body2" Class="notification-detail-body">@sections.Advice</MudText>
+                                </div>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body2" Class="notification-detail-body">@_selectedNotification.Detail</MudText>
+                            }
                         </div>
                     }
                     else if (_notifications.Count == 0)
@@ -758,8 +779,37 @@
             ? NotificationKind.Chat
             : NotificationKind.Activity;
 
-    private static string TrimNotification(string detail) =>
-        detail.Length > 96 ? $"{detail[..96]}..." : detail;
+    private static string TrimNotification(string detail)
+    {
+        var sections = SplitNotificationDetail(detail);
+        var text = sections.Observation ?? detail;
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return text.Length > 96 ? $"{text[..96]}..." : text;
+    }
+
+    private static (string? Observation, string? Advice) SplitNotificationDetail(string detail)
+    {
+        const string observationMarker = "Observation:";
+        const string actionMarker = "What to do:";
+        var observationAt = detail.IndexOf(observationMarker, StringComparison.OrdinalIgnoreCase);
+        var actionAt = detail.IndexOf(actionMarker, StringComparison.OrdinalIgnoreCase);
+        if (observationAt < 0 || actionAt <= observationAt)
+        {
+            return (null, null);
+        }
+
+        var observation = detail[(observationAt + observationMarker.Length)..actionAt].Trim();
+        var advice = detail[(actionAt + actionMarker.Length)..].Trim();
+        var repeated = advice.IndexOf(observationMarker, StringComparison.OrdinalIgnoreCase);
+        if (repeated >= 0)
+        {
+            advice = advice[..repeated].Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(observation) || string.IsNullOrWhiteSpace(advice)
+            ? (null, null)
+            : (observation, advice);
+    }
 
     private static string NotificationItemClass(AppNotification notification) =>
         $"notification-item{(notification.ReadAt is null ? " unread" : string.Empty)}";

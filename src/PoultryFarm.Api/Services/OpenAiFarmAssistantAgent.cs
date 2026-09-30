@@ -88,7 +88,8 @@ User message:
         var input = $"""
 You are Poultry Farm Assistant. A worker filed an end-of-day farm observation.
 Write an in-app alert for the farm owner and the workers.
-Say what is happening and the immediate action they should take today.
+Write only the action the farm should take today.
+Do not repeat the worker's observation and do not start with "Observation".
 Mention medication, isolation, feed changes, or a vet only when the observation and farm records support it.
 Do not invent this farm's numbers or a drug dose. Keep it under 120 words. No greeting.
 
@@ -109,7 +110,7 @@ Farm records:
         catch (Exception ex) when (ex is AiProviderException or InvalidOperationException or HttpRequestException or TaskCanceledException)
         {
             logger.LogWarning(ex, "Observation advice could not be generated.");
-            return $"Review this {category.ToLowerInvariant()} observation from {userDisplayName} and check today's flock, feed, and medication schedule before the next round. Observation: {Trim(notes, 280)}";
+            return "Check the flock, separate anything that looks abnormal, and review today's feed and medication schedule before the next round.";
         }
     }
 
