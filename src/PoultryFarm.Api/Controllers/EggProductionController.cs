@@ -358,7 +358,7 @@ public sealed class EggProductionController(
             targetType,
             targetId,
             roles,
-            cancellationToken);
+            cancellationToken: cancellationToken);
     }
 
     private static EggProductionDto ToDto(EggProduction production) => new(

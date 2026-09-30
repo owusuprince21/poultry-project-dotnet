@@ -14,6 +14,7 @@ public interface IActivityNotifier
         string? targetType = null,
         Guid? targetId = null,
         IReadOnlyCollection<UserRole>? recipientRoles = null,
+        bool includeActor = false,
         CancellationToken cancellationToken = default);
 
     Task NotifySystemAdminsAsync(

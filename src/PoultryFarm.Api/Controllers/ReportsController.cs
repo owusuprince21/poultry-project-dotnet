@@ -3,7 +3,11 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using PoultryFarm.Api.Authorization;
+using PoultryFarm.Api.Services;
+using PoultryFarm.Application.Common.Interfaces;
 using PoultryFarm.Domain.Common;
+using PoultryFarm.Domain.Operations;
 using PoultryFarm.Infrastructure.Identity;
 using PoultryFarm.Infrastructure.Persistence;
 
@@ -12,7 +16,12 @@ namespace PoultryFarm.Api.Controllers;
 [ApiController]
 [Route("api/reports")]
 [Authorize]
-public sealed class ReportsController(ApplicationDbContext dbContext, UserManager<ApplicationUser> userManager) : ControllerBase
+public sealed class ReportsController(
+    ApplicationDbContext dbContext,
+    UserManager<ApplicationUser> userManager,
+    IFarmAssistantAgent assistantAgent,
+    IActivityNotifier activityNotifier,
+    ControllerAudit audit) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get([FromQuery] string operation = "production", [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null, CancellationToken cancellationToken = default)
@@ -32,7 +41,7 @@ public sealed class ReportsController(ApplicationDbContext dbContext, UserManage
     }
 
     [HttpGet("daily")]
-    public async Task<ActionResult<DailySummaryDto>> Daily([FromQuery] DateOnly? date, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<DailyObservationDto>>> Daily([FromQuery] DateOnly? date, CancellationToken cancellationToken)
     {
         var companyId = await CompanyIdAsync();
         if (!companyId.HasValue)
@@ -41,101 +50,109 @@ public sealed class ReportsController(ApplicationDbContext dbContext, UserManage
         }
 
         var day = date ?? DateOnly.FromDateTime(DateTime.UtcNow);
-
-        var eggs = await dbContext.EggProductions
+        var items = await dbContext.DailyObservations
             .AsNoTracking()
-            .Include(x => x.Batch)
-            .Include(x => x.BatchVariant)
             .Where(x => x.CompanyId == companyId && x.Date == day)
-            .ToListAsync(cancellationToken);
-        eggs = eggs.OrderBy(x => x.CollectionPeriod).ThenBy(x => x.Batch?.BatchNumber).ToList();
-
-        var feed = await dbContext.FeedConsumptions
-            .AsNoTracking()
-            .Include(x => x.Batch)
-            .Include(x => x.FeedConfiguration)
-            .Where(x => x.CompanyId == companyId && x.Date == day)
-            .ToListAsync(cancellationToken);
-        feed = feed.OrderBy(x => x.CollectionPeriod).ThenBy(x => x.Batch?.BatchNumber).ToList();
-
-        var health = await dbContext.BirdHealthEvents
-            .AsNoTracking()
-            .Include(x => x.Batch)
-            .Include(x => x.BatchVariant)
-            .Where(x => x.CompanyId == companyId && x.Date == day)
-            .OrderBy(x => x.Batch!.BatchNumber)
+            .OrderByDescending(x => x.CreatedAt)
+            .Select(x => new DailyObservationDto(x.Id, x.Date, x.Category, x.Notes, x.Recommendation, x.AuthorName, x.CreatedAt))
             .ToListAsync(cancellationToken);
 
-        var eggSales = await dbContext.EggSales
-            .AsNoTracking()
-            .Include(x => x.Items)
-            .Where(x => x.CompanyId == companyId && x.SaleDate == day)
-            .OrderBy(x => x.BuyerName)
-            .ToListAsync(cancellationToken);
-
-        var birdSales = await dbContext.BirdSales
-            .AsNoTracking()
-            .Include(x => x.Batch)
-            .Where(x => x.CompanyId == companyId && x.SaleDate == day)
-            .OrderBy(x => x.BuyerName)
-            .ToListAsync(cancellationToken);
-
-        int EggsFor(EggCollectionPeriod period) => eggs
-            .Where(x => x.CollectionPeriod == period)
-            .Sum(x => x.TotalEggs);
-
-        decimal FeedFor(EggCollectionPeriod period) => feed
-            .Where(x => x.CollectionPeriod == period)
-            .Sum(x => x.AmountKg);
-
-        var sales = eggSales
-            .Select(x => new DailySaleLineDto(
-                "Eggs",
-                x.BuyerName,
-                $"{x.Items.Sum(item => item.Eggs):N0} eggs",
-                x.GrandTotal))
-            .Concat(birdSales.Select(x => new DailySaleLineDto(
-                "Birds",
-                x.BuyerName,
-                $"{x.BirdsSold:N0} birds from {x.Batch?.BatchNumber ?? "batch"}",
-                x.TotalAmount)))
-            .ToList();
-
-        return Ok(new DailySummaryDto(
-            day,
-            eggs.Sum(x => x.TotalEggs),
-            EggsFor(EggCollectionPeriod.Morning),
-            EggsFor(EggCollectionPeriod.Afternoon),
-            EggsFor(EggCollectionPeriod.Evening),
-            feed.Sum(x => x.AmountKg),
-            FeedFor(EggCollectionPeriod.Morning),
-            FeedFor(EggCollectionPeriod.Afternoon),
-            FeedFor(EggCollectionPeriod.Evening),
-            health.Where(x => x.Status == BirdHealthStatus.Sick).Sum(x => x.Count),
-            health.Where(x => x.Status == BirdHealthStatus.Dead).Sum(x => x.Count),
-            eggSales.Sum(x => x.GrandTotal),
-            birdSales.Sum(x => x.TotalAmount),
-            eggs.Select(x => new DailyEggLineDto(
-                x.CollectionPeriod.ToString(),
-                x.Batch?.BatchNumber ?? string.Empty,
-                (x.BatchVariant?.Color ?? VariantColor.Mixed).ToString(),
-                x.CollectionType.ToString(),
-                x.TotalEggs)).ToList(),
-            feed.Select(x => new DailyFeedLineDto(
-                x.CollectionPeriod.ToString(),
-                x.Batch?.BatchNumber ?? string.Empty,
-                x.FeedConfiguration?.Name ?? x.FeedType.ToString(),
-                x.BagsUsed,
-                x.BagSizeKg ?? 0,
-                x.AmountKg)).ToList(),
-            health.Select(x => new DailyHealthLineDto(
-                x.Batch?.BatchNumber ?? string.Empty,
-                (x.BatchVariant?.Color ?? VariantColor.Mixed).ToString(),
-                x.Status.ToString(),
-                x.Count,
-                x.Cause)).ToList(),
-            sales));
+        return Ok(items);
     }
+
+    [HttpPost("daily")]
+    public async Task<ActionResult<DailyObservationDto>> CreateDaily(DailyObservationRequest request, CancellationToken cancellationToken)
+    {
+        if (PermissionHelpers.IsSuperAdmin(User))
+        {
+            return Forbid();
+        }
+
+        var companyId = await CompanyIdAsync();
+        if (!companyId.HasValue)
+        {
+            return Forbid();
+        }
+
+        var notes = request.Notes?.Trim() ?? string.Empty;
+        if (notes.Length < 8)
+        {
+            return BadRequest(new { detail = "Write what you observed. A few words is not enough for the assistant to act on." });
+        }
+
+        if (!Enum.IsDefined(request.Category))
+        {
+            return BadRequest(new { detail = "Select eggs, feed, birds, or a general observation." });
+        }
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var user = Guid.TryParse(userId, out var parsedId) ? await userManager.FindByIdAsync(parsedId.ToString()) : null;
+        if (user is null)
+        {
+            return Unauthorized(new { detail = "User account was not found." });
+        }
+
+        var author = $"{user.FirstName} {user.LastName}".Trim();
+        if (string.IsNullOrWhiteSpace(author))
+        {
+            author = user.UserName ?? "Worker";
+        }
+
+        var categoryLabel = CategoryLabel(request.Category);
+        var recommendation = await assistantAgent.AdviseOnObservationAsync(companyId.Value, author, categoryLabel, request.Date, notes, cancellationToken);
+        if (recommendation.Length > 4000)
+        {
+            recommendation = recommendation[..4000];
+        }
+
+        var observation = new DailyObservation
+        {
+            CompanyId = companyId.Value,
+            Date = request.Date,
+            Category = request.Category,
+            Notes = notes.Length > 4000 ? notes[..4000] : notes,
+            Recommendation = recommendation,
+            AuthorName = author,
+            CreatedByUserId = user.Id
+        };
+        dbContext.DailyObservations.Add(observation);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var detail = $"{author} recorded a {categoryLabel.ToLowerInvariant()} for {request.Date:yyyy-MM-dd}. Observation: {Trim(notes, 500)} What to do: {Trim(recommendation, 2800)}";
+        if (detail.Length > 4000)
+        {
+            detail = detail[..4000];
+        }
+
+        await activityNotifier.NotifyCompanyAsync(
+            companyId.Value,
+            $"{categoryLabel}: action from farm assistant",
+            detail,
+            user.Id,
+            author,
+            kind: "assistant",
+            targetType: "daily-observation",
+            targetId: observation.Id,
+            recipientRoles: [UserRole.Admin, UserRole.Worker],
+            includeActor: true,
+            cancellationToken: cancellationToken);
+
+        await audit.WriteAsync("Create", "Operations", "DailyObservation", categoryLabel, $"{author} recorded a {categoryLabel.ToLowerInvariant()}.", observation.Id, companyId, cancellationToken: cancellationToken);
+
+        return Ok(new DailyObservationDto(observation.Id, observation.Date, observation.Category, observation.Notes, observation.Recommendation, observation.AuthorName, observation.CreatedAt));
+    }
+
+    private static string CategoryLabel(DailyObservationCategory category) =>
+        category switch
+        {
+            DailyObservationCategory.Eggs => "Eggs observation",
+            DailyObservationCategory.Feed => "Feed observation",
+            DailyObservationCategory.Birds => "Birds observation",
+            _ => "General observation"
+        };
+
+    private static string Trim(string value, int max) =>
+        value.Length <= max ? value : value[..max] + "...";
 
     private async Task<Guid?> CompanyIdAsync()
     {
@@ -145,29 +162,13 @@ public sealed class ReportsController(ApplicationDbContext dbContext, UserManage
     }
 }
 
-public sealed record DailySummaryDto(
+public sealed record DailyObservationDto(
+    Guid Id,
     DateOnly Date,
-    int TotalEggs,
-    int MorningEggs,
-    int AfternoonEggs,
-    int EveningEggs,
-    decimal TotalFeedKg,
-    decimal MorningFeedKg,
-    decimal AfternoonFeedKg,
-    decimal EveningFeedKg,
-    int SickBirds,
-    int DeadBirds,
-    decimal EggSalesTotal,
-    decimal BirdSalesTotal,
-    IReadOnlyList<DailyEggLineDto> Eggs,
-    IReadOnlyList<DailyFeedLineDto> Feed,
-    IReadOnlyList<DailyHealthLineDto> Health,
-    IReadOnlyList<DailySaleLineDto> Sales);
+    DailyObservationCategory Category,
+    string Notes,
+    string? Recommendation,
+    string AuthorName,
+    DateTimeOffset CreatedAt);
 
-public sealed record DailyEggLineDto(string Period, string BatchNumber, string BirdColor, string CollectionType, int Eggs);
-
-public sealed record DailyFeedLineDto(string Period, string BatchNumber, string FeedType, int BagsUsed, int BagSizeKg, decimal TotalKg);
-
-public sealed record DailyHealthLineDto(string BatchNumber, string BirdColor, string Status, int Count, string? Cause);
-
-public sealed record DailySaleLineDto(string Kind, string Buyer, string Detail, decimal Amount);
+public sealed record DailyObservationRequest(DateOnly Date, DailyObservationCategory Category, string Notes);

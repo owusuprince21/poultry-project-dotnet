@@ -103,7 +103,7 @@
         new("Feed", $"{(_stats?.WeeklyFeedConsumption ?? 0):N1} kg recorded in 7 days", "High", Color.Success, "/feed"),
         new("Bird health", $"{(_stats?.SickBirds ?? 0):N0} sick, {(_stats?.DeadBirds ?? 0):N0} dead", "High", (_stats?.SickBirds ?? 0) + (_stats?.DeadBirds ?? 0) > 0 ? Color.Warning : Color.Success, "/health"),
         new("Sales", $"GHS {(_stats?.WeeklySalesRevenue ?? 0):N2} weekly revenue", "Medium", Color.Info, "/sales"),
-        new("Daily summary", "Eggs, feed, health, and sales for one day", "High", Color.Primary, "/daily-summary")
+        new("Daily summary", "Record what you saw so the assistant can alert the farm", "High", Color.Primary, "/daily-summary")
     ];
 
     private IReadOnlyCollection<DashboardMessageItem> Messages =>

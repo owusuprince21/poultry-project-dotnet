@@ -22,6 +22,7 @@ public sealed class SignalRActivityNotifier(
         string? targetType = null,
         Guid? targetId = null,
         IReadOnlyCollection<UserRole>? recipientRoles = null,
+        bool includeActor = false,
         CancellationToken cancellationToken = default)
     {
         var resolvedActor = await ResolveActorNameAsync(actorUserId, actorName, cancellationToken);
@@ -33,7 +34,7 @@ public sealed class SignalRActivityNotifier(
                 !x.IsSystemAdmin &&
                 x.FarmRole != UserRole.SystemAdmin &&
                 x.FarmRole != UserRole.SubAdmin &&
-                (!actorUserId.HasValue || x.Id != actorUserId.Value))
+                (includeActor || !actorUserId.HasValue || x.Id != actorUserId.Value))
             .AsQueryable();
 
         if (recipientRoles is { Count: > 0 })

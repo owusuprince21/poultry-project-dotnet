@@ -1747,6 +1747,65 @@ namespace PoultryFarm.Infrastructure.Persistence.Migrations
                     b.ToTable("PasswordInvites", (string)null);
                 });
 
+            modelBuilder.Entity("PoultryFarm.Domain.Operations.DailyObservation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AuthorName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Notes")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("Recommendation")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompanyId", "Date");
+
+                    b.ToTable("DailyObservations", (string)null);
+                });
+
             modelBuilder.Entity("PoultryFarm.Domain.Production.EggProduction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2675,6 +2734,17 @@ namespace PoultryFarm.Infrastructure.Persistence.Migrations
                     b.Navigation("Batch");
 
                     b.Navigation("BatchVariant");
+
+                    b.Navigation("Company");
+                });
+
+            modelBuilder.Entity("PoultryFarm.Domain.Operations.DailyObservation", b =>
+                {
+                    b.HasOne("PoultryFarm.Domain.Companies.Company", "Company")
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("Company");
                 });

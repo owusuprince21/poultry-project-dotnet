@@ -778,7 +778,7 @@ public sealed class FeedController(
             targetType,
             targetId,
             roles,
-            cancellationToken);
+            cancellationToken: cancellationToken);
     }
 
     private static FeedConsumptionDto ToConsumptionDto(FeedConsumption record) => new(

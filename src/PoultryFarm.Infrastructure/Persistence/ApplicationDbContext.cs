@@ -11,6 +11,7 @@ using PoultryFarm.Domain.Feed;
 using PoultryFarm.Domain.Health;
 using PoultryFarm.Domain.Identity;
 using PoultryFarm.Domain.Marketplace;
+using PoultryFarm.Domain.Operations;
 using PoultryFarm.Domain.Production;
 using PoultryFarm.Domain.Sales;
 using PoultryFarm.Domain.Schedules;
@@ -52,6 +53,7 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<MarketplaceConversation> MarketplaceConversations => Set<MarketplaceConversation>();
     public DbSet<PasswordInvite> PasswordInvites => Set<PasswordInvite>();
     public DbSet<WorkerPagePermission> WorkerPagePermissions => Set<WorkerPagePermission>();
+    public DbSet<DailyObservation> DailyObservations => Set<DailyObservation>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

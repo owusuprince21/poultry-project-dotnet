@@ -1308,7 +1308,7 @@ public sealed class MarketplaceController(
                 "marketplace_conversation",
                 conversation.Id,
                 [UserRole.Admin, UserRole.Worker],
-                cancellationToken);
+                cancellationToken: cancellationToken);
         }
 
         ChatMessageDto? firstMessage = null;

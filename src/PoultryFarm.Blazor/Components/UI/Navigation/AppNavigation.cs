@@ -140,7 +140,7 @@ public static class AppNavigation
                     "Daily Summary Report",
                     "/daily-summary",
                     Icons.Material.Filled.Summarize,
-                    NavPermission.WorkerOnly,
+                    NavPermission.FarmAdminOrWorker,
                     WorkerPageKeys.DailySummary)
             ]),
 

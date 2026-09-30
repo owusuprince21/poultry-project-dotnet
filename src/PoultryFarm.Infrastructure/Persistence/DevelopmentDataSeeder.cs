@@ -61,6 +61,27 @@ public static class DevelopmentDataSeeder
                         CREATE UNIQUE INDEX IX_FeedConsumptions_BatchVariantId_Date_FeedConfigurationId_CollectionPeriod
                         ON dbo.FeedConsumptions (BatchVariantId, [Date], FeedConfigurationId, CollectionPeriod);
                     END
+
+                    IF OBJECT_ID('dbo.DailyObservations', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE dbo.DailyObservations (
+                            Id uniqueidentifier NOT NULL CONSTRAINT PK_DailyObservations PRIMARY KEY,
+                            CompanyId uniqueidentifier NOT NULL,
+                            [Date] date NOT NULL,
+                            Category nvarchar(20) NOT NULL,
+                            Notes nvarchar(4000) NOT NULL,
+                            Recommendation nvarchar(4000) NULL,
+                            AuthorName nvarchar(200) NOT NULL,
+                            CreatedByUserId uniqueidentifier NULL,
+                            CreatedAt datetimeoffset NOT NULL,
+                            UpdatedByUserId uniqueidentifier NULL,
+                            UpdatedAt datetimeoffset NULL,
+                            IsDeleted bit NOT NULL,
+                            RowVersion rowversion NOT NULL,
+                            CONSTRAINT FK_DailyObservations_Companies_CompanyId FOREIGN KEY (CompanyId) REFERENCES dbo.Companies (Id)
+                        );
+                        CREATE INDEX IX_DailyObservations_CompanyId_Date ON dbo.DailyObservations (CompanyId, [Date]);
+                    END
                     """);
             });
             return;

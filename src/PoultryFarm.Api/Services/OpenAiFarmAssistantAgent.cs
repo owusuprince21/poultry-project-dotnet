@@ -82,6 +82,37 @@ User message:
         }
     }
 
+    public async Task<string> AdviseOnObservationAsync(Guid companyId, string userDisplayName, string category, DateOnly date, string notes, CancellationToken cancellationToken = default)
+    {
+        var farmContext = await BuildFarmContextAsync(companyId, cancellationToken);
+        var input = $"""
+You are Poultry Farm Assistant. A worker filed an end-of-day farm observation.
+Write an in-app alert for the farm owner and the workers.
+Say what is happening and the immediate action they should take today.
+Mention medication, isolation, feed changes, or a vet only when the observation and farm records support it.
+Do not invent this farm's numbers or a drug dose. Keep it under 120 words. No greeting.
+
+Category: {category}
+Date: {date:yyyy-MM-dd}
+Recorded by: {userDisplayName}
+Observation:
+{notes}
+
+Farm records:
+{farmContext}
+""";
+
+        try
+        {
+            return await aiProviderClient.GenerateAsync(input, cancellationToken);
+        }
+        catch (Exception ex) when (ex is AiProviderException or InvalidOperationException or HttpRequestException or TaskCanceledException)
+        {
+            logger.LogWarning(ex, "Observation advice could not be generated.");
+            return $"Review this {category.ToLowerInvariant()} observation from {userDisplayName} and check today's flock, feed, and medication schedule before the next round. Observation: {Trim(notes, 280)}";
+        }
+    }
+
     private async Task<string?> TryAnswerLocallyAsync(Guid companyId, string userDisplayName, string prompt, CancellationToken cancellationToken)
     {
         var normalized = NormalizePrompt(prompt);
@@ -271,8 +302,35 @@ Current egg inventory:
             }
         }
 
+        var observations = await dbContext.DailyObservations
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.Date >= today.AddDays(-14) && x.Date <= today)
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(12)
+            .ToListAsync(cancellationToken);
+
+        sb.AppendLine("Worker observations (14 days):");
+        if (observations.Count == 0)
+        {
+            sb.AppendLine("- None");
+        }
+        else
+        {
+            foreach (var observation in observations)
+            {
+                sb.AppendLine($"- {observation.Date:yyyy-MM-dd} {observation.Category} by {observation.AuthorName}: {Trim(observation.Notes, 240)}");
+                if (!string.IsNullOrWhiteSpace(observation.Recommendation))
+                {
+                    sb.AppendLine($"  Advice already sent: {Trim(observation.Recommendation, 240)}");
+                }
+            }
+        }
+
         return sb.ToString();
     }
+
+    private static string Trim(string? value, int max) =>
+        string.IsNullOrWhiteSpace(value) ? "none" : value.Length <= max ? value.Trim() : value.Trim()[..max] + "...";
 
     private static bool NeedsFarmData(string prompt)
     {
@@ -281,7 +339,7 @@ Current egg inventory:
         [
             "egg", "feed", "batch", "stock", "inventory", "sale", "sold", "medication", "medicine", "vaccine",
             "sick", "dead", "death", "mortality", "debeak", "production", "layer", "broiler", "bird count",
-            "how many", "available", "overdue", "schedule", "record", "report", "today", "this week",
+            "how many", "available", "overdue", "schedule", "record", "report", "observation", "today", "this week",
             "my farm", "our farm", "current", "status", "profit", "revenue", "buyer", "listing"
         ];
 

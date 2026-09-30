@@ -2,11 +2,26 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using PoultryFarm.Domain.Feed;
 using PoultryFarm.Domain.Health;
+using PoultryFarm.Domain.Operations;
 using PoultryFarm.Domain.Production;
 using PoultryFarm.Domain.Sales;
 using PoultryFarm.Domain.Schedules;
 
 namespace PoultryFarm.Infrastructure.Persistence.Configurations;
+
+public sealed class DailyObservationConfiguration : IEntityTypeConfiguration<DailyObservation>
+{
+    public void Configure(EntityTypeBuilder<DailyObservation> builder)
+    {
+        builder.ToTable("DailyObservations");
+        builder.HasQueryFilter(x => !x.IsDeleted);
+        builder.Property(x => x.Category).HasConversion<string>().HasMaxLength(20);
+        builder.Property(x => x.Notes).HasMaxLength(4000).IsRequired();
+        builder.Property(x => x.Recommendation).HasMaxLength(4000);
+        builder.Property(x => x.AuthorName).HasMaxLength(200).IsRequired();
+        builder.HasIndex(x => new { x.CompanyId, x.Date });
+    }
+}
 
 public sealed class EggProductionConfiguration : IEntityTypeConfiguration<EggProduction>
 {
