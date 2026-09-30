@@ -263,7 +263,7 @@
     }
 
     private string BatchRowClass(BatchModel batch, int _) =>
-        batch.Id == _selectedBatchId ? "mud-theme-primary mud-opacity-10 cursor-pointer" : "cursor-pointer";
+        batch.Id == _selectedBatchId ? "batch-row-selected cursor-pointer" : "cursor-pointer";
 
     private async Task CreateBatchAsync()
     {

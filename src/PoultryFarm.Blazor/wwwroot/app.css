@@ -213,6 +213,24 @@ h1:focus {
     font-weight: 700;
 }
 
+.mud-table-row.batch-row-selected > td,
+.mud-table-row.mud-theme-primary > td {
+    background-color: #2563eb !important;
+    color: #fff !important;
+}
+
+.mud-table-row.batch-row-selected .mud-typography,
+.mud-table-row.batch-row-selected .mud-chip,
+.mud-table-row.mud-theme-primary .mud-typography,
+.mud-table-row.mud-theme-primary .mud-chip {
+    color: #fff !important;
+}
+
+.mud-table-row.batch-row-selected .mud-chip,
+.mud-table-row.mud-theme-primary .mud-chip {
+    border-color: #fff !important;
+}
+
 .nav-link-with-badge .mud-nav-link-text {
     width: 100%;
 }
