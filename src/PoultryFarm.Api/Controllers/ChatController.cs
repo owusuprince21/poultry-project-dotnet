@@ -94,8 +94,7 @@ public sealed class ChatController(
             .AsNoTracking()
             .Where(c =>
                 (c.BuyerUserId == currentUserId && contactIds.Contains(c.FarmContactUserId)) ||
-                (contactIds.Contains(c.BuyerUserId) &&
-                 (isPlatformAdmin || c.CompanyId == currentUser.CompanyId)));
+                (contactIds.Contains(c.BuyerUserId) && c.CompanyId == currentUser.CompanyId));
 
         var listingTitles = await listingTitlesQuery
             .Select(c => new { ContactId = c.BuyerUserId == currentUserId ? c.FarmContactUserId : c.BuyerUserId, Title = c.Listing!.Title, c.CreatedAt })
@@ -216,40 +215,34 @@ public sealed class ChatController(
         await TouchAsync(currentUser, cancellationToken);
 
         var contactUser = await dbContext.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == contactId, cancellationToken);
-        var isBuyerReadOnlyOversight = IsPlatformAdminRole(NormalizeRole(currentUser)) &&
-                                       contactUser?.FarmRole == UserRole.MarketplaceBuyer;
+        var unreadMessages = await dbContext.ChatMessages
+            .Where(x => x.SenderUserId == contactId && x.RecipientUserId == currentUser.Id && x.ReadAt == null)
+            .ToListAsync(cancellationToken);
+        var readAt = DateTimeOffset.UtcNow;
 
-        if (!isBuyerReadOnlyOversight)
+        foreach (var unreadMessage in unreadMessages)
         {
-            var unreadMessages = await dbContext.ChatMessages
-                .Where(x => x.SenderUserId == contactId && x.RecipientUserId == currentUser.Id && x.ReadAt == null)
+            unreadMessage.ReadAt = readAt;
+        }
+
+        if (unreadMessages.Count > 0)
+        {
+            var chatNotifications = await dbContext.AppNotifications
+                .Where(x =>
+                    x.RecipientUserId == currentUser.Id &&
+                    x.Kind == "chat" &&
+                    x.TargetId == contactId &&
+                    x.ReadAt == null)
                 .ToListAsync(cancellationToken);
-            var readAt = DateTimeOffset.UtcNow;
 
-            foreach (var unreadMessage in unreadMessages)
+            foreach (var notification in chatNotifications)
             {
-                unreadMessage.ReadAt = readAt;
+                notification.ReadAt = readAt;
             }
 
-            if (unreadMessages.Count > 0)
-            {
-                var chatNotifications = await dbContext.AppNotifications
-                    .Where(x =>
-                        x.RecipientUserId == currentUser.Id &&
-                        x.Kind == "chat" &&
-                        x.TargetId == contactId &&
-                        x.ReadAt == null)
-                    .ToListAsync(cancellationToken);
-
-                foreach (var notification in chatNotifications)
-                {
-                    notification.ReadAt = readAt;
-                }
-
-                await dbContext.SaveChangesAsync(cancellationToken);
-                await hubContext.Clients.User(contactId.ToString())
-                    .SendAsync("chat.read", new ChatReadReceiptDto(currentUser.Id, readAt), cancellationToken);
-            }
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await hubContext.Clients.User(contactId.ToString())
+                .SendAsync("chat.read", new ChatReadReceiptDto(currentUser.Id, readAt), cancellationToken);
         }
 
         var currentUserId = currentUser.Id;
@@ -257,17 +250,7 @@ public sealed class ChatController(
             ? []
             : await SharedMarketplaceConversationIdsAsync(currentUser, contactUser, cancellationToken);
         List<ChatMessage> chatMessages;
-        if (isBuyerReadOnlyOversight)
-        {
-            var conversationIds = await dbContext.MarketplaceConversations
-                .AsNoTracking()
-                .Where(c => c.BuyerUserId == contactId)
-                .Select(c => c.Id)
-                .ToListAsync(cancellationToken);
-
-            chatMessages = await LoadConversationMessagesAsync(conversationIds, cancellationToken);
-        }
-        else if (sharedConversationIds.Count > 0)
+        if (sharedConversationIds.Count > 0)
         {
             chatMessages = await LoadConversationMessagesAsync(sharedConversationIds, cancellationToken);
         }
@@ -298,13 +281,12 @@ public sealed class ChatController(
         var messages = chatMessages
             .Select(x =>
             {
-                var dto = ToDto(
+                return ToDto(
                     x,
                     currentUserId,
                     users.GetValueOrDefault(x.SenderUserId),
                     users.GetValueOrDefault(x.RecipientUserId),
                     x.ReplyToMessage == null ? null : users.GetValueOrDefault(x.ReplyToMessage.SenderUserId));
-                return isBuyerReadOnlyOversight ? dto with { IsMine = false, CanEdit = false, CanDelete = false } : dto;
             })
             .ToList();
 
@@ -748,14 +730,9 @@ public sealed class ChatController(
 
         if (currentRole is AppRoles.SuperAdmin or AppRoles.SubAdmin or AppRoles.SystemAdmin)
         {
-            var platformVisibleBuyerIds = dbContext.MarketplaceConversations
-                .AsNoTracking()
-                .Select(c => c.BuyerUserId);
-
             return query.Where(user =>
                 user.IsSystemAdmin ||
-                user.FarmRole == UserRole.Admin ||
-                (user.FarmRole == UserRole.MarketplaceBuyer && platformVisibleBuyerIds.Contains(user.Id)));
+                user.FarmRole == UserRole.Admin);
         }
 
         if (currentRole == AppRoles.MarketplaceBuyer)

@@ -24,17 +24,16 @@ public sealed class SignalRActivityNotifier(
         IReadOnlyCollection<UserRole>? recipientRoles = null,
         CancellationToken cancellationToken = default)
     {
-        var companyName = await dbContext.Companies
-            .AsNoTracking()
-            .Where(x => x.Id == companyId)
-            .Select(x => x.Name)
-            .FirstOrDefaultAsync(cancellationToken) ?? "Unknown farm";
-
         var resolvedActor = await ResolveActorNameAsync(actorUserId, actorName, cancellationToken);
         var companyDetail = EnsureActorInDetail(detail, resolvedActor);
 
         var companyQuery = dbContext.Users
-            .Where(x => x.CompanyId == companyId && (!actorUserId.HasValue || x.Id != actorUserId.Value))
+            .Where(x =>
+                x.CompanyId == companyId &&
+                !x.IsSystemAdmin &&
+                x.FarmRole != UserRole.SystemAdmin &&
+                x.FarmRole != UserRole.SubAdmin &&
+                (!actorUserId.HasValue || x.Id != actorUserId.Value))
             .AsQueryable();
 
         if (recipientRoles is { Count: > 0 })
@@ -51,32 +50,6 @@ public sealed class SignalRActivityNotifier(
             companyId,
             title,
             companyDetail,
-            actorUserId,
-            resolvedActor,
-            kind,
-            targetType,
-            targetId,
-            cancellationToken);
-
-        var adminRecipients = await dbContext.Users
-            .Where(x =>
-                x.IsSystemAdmin &&
-                (!actorUserId.HasValue || x.Id != actorUserId.Value) &&
-                !companyRecipients.Contains(x.Id))
-            .Select(x => x.Id)
-            .ToListAsync(cancellationToken);
-
-        if (adminRecipients.Count == 0)
-        {
-            return;
-        }
-
-        var adminDetail = AttachFarmName(companyDetail, companyName);
-        await PersistAndSendAsync(
-            adminRecipients,
-            companyId,
-            title,
-            adminDetail,
             actorUserId,
             resolvedActor,
             kind,
@@ -170,17 +143,6 @@ public sealed class SignalRActivityNotifier(
         }
 
         return $"{actorName}: {detail}";
-    }
-
-    private static string AttachFarmName(string detail, string companyName)
-    {
-        if (detail.Contains(companyName, StringComparison.OrdinalIgnoreCase)
-            || detail.Contains("(Farm:", StringComparison.OrdinalIgnoreCase))
-        {
-            return detail;
-        }
-
-        return $"{detail} (Farm: {companyName})";
     }
 
     private async Task PersistAndSendAsync(
