@@ -15,6 +15,7 @@ public sealed class FeedConsumption : AuditableEntity
     public Guid? FeedConfigurationId { get; set; }
     public FeedConfiguration? FeedConfiguration { get; set; }
     public DateOnly Date { get; set; }
+    public EggCollectionPeriod CollectionPeriod { get; set; } = EggCollectionPeriod.Morning;
     public decimal AmountKg { get; set; }
     public FeedType FeedType { get; set; }
     public decimal? CostPerKg { get; set; }

@@ -45,6 +45,22 @@ public static class DevelopmentDataSeeder
                         CREATE UNIQUE INDEX IX_EggProductions_BatchVariantId_Date_CollectionPeriod_CollectionType_EggColor
                         ON dbo.EggProductions (BatchVariantId, [Date], CollectionPeriod, CollectionType, EggColor);
                     END
+
+                    IF COL_LENGTH('dbo.FeedConsumptions', 'CollectionPeriod') IS NULL
+                    BEGIN
+                        ALTER TABLE dbo.FeedConsumptions
+                        ADD CollectionPeriod nvarchar(20) NOT NULL
+                            CONSTRAINT DF_FeedConsumptions_CollectionPeriod DEFAULT 'Morning';
+                    END
+
+                    IF NOT EXISTS (
+                        SELECT 1 FROM sys.indexes
+                        WHERE name = 'IX_FeedConsumptions_BatchVariantId_Date_FeedConfigurationId_CollectionPeriod'
+                          AND object_id = OBJECT_ID('dbo.FeedConsumptions'))
+                    BEGIN
+                        CREATE UNIQUE INDEX IX_FeedConsumptions_BatchVariantId_Date_FeedConfigurationId_CollectionPeriod
+                        ON dbo.FeedConsumptions (BatchVariantId, [Date], FeedConfigurationId, CollectionPeriod);
+                    END
                     """);
             });
             return;

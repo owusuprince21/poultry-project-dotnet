@@ -303,6 +303,11 @@ public sealed class FeedController(
             return BadRequest(new { detail = "Bags used must be greater than zero." });
         }
 
+        if (await PeriodExistsAsync(variant.Id, request.Date, feedConfig.Id, request.CollectionPeriod, null, cancellationToken))
+        {
+            return Conflict(new { detail = "A feed entry already exists for this batch, feed type, date, and part of the day. Choose another part of the day, or update the existing entry." });
+        }
+
         if (!await ConsumeStockAsync(variant.Batch!.CompanyId, feedConfig.Id, LegacyFeedTypeFromName(feedConfig.Name), feedConfig.BagSizeKg, request.BagsUsed, cancellationToken))
         {
             return BadRequest(new { detail = "Insufficient feed stock for the selected feed type and bag size." });
@@ -314,6 +319,7 @@ public sealed class FeedController(
             BatchId = variant.BatchId,
             BatchVariantId = variant.Id,
             Date = request.Date,
+            CollectionPeriod = request.CollectionPeriod,
             FeedConfigurationId = feedConfig.Id,
             FeedType = LegacyFeedTypeFromName(feedConfig.Name),
             BagSizeKg = feedConfig.BagSizeKg,
@@ -325,7 +331,7 @@ public sealed class FeedController(
 
         dbContext.FeedConsumptions.Add(consumption);
         await dbContext.SaveChangesAsync(cancellationToken);
-        await NotifyOperationAsync(user, consumption.CompanyId, "Feed usage recorded", $"{DisplayName(user)} recorded {consumption.AmountKg:N1} kg feed usage for batch {variant.Batch.BatchNumber}.", "feed-consumption", consumption.Id, cancellationToken);
+        await NotifyOperationAsync(user, consumption.CompanyId, "Feed usage recorded", $"{DisplayName(user)} recorded {consumption.CollectionPeriod.ToString().ToLowerInvariant()} feed usage of {consumption.AmountKg:N1} kg for batch {variant.Batch.BatchNumber}.", "feed-consumption", consumption.Id, cancellationToken);
         await WriteFeedAuditAsync("Create", "FeedConsumption", variant.Batch.BatchNumber, $"Recorded {consumption.AmountKg:N1} kg feed usage.", consumption.Id, consumption.CompanyId, cancellationToken);
         return Ok(ToConsumptionDto(consumption));
     }
@@ -355,7 +361,6 @@ public sealed class FeedController(
             return Forbid();
         }
 
-        RestoreStock(consumption.CompanyId, consumption.FeedConfigurationId, consumption.FeedType, consumption.BagSizeKg ?? 0, consumption.BagsUsed);
         var variant = await GetScopedVariantAsync(request.BatchVariantId, cancellationToken);
         if (variant is null)
         {
@@ -368,6 +373,12 @@ public sealed class FeedController(
             return BadRequest(new { detail = "Select a valid feed type configuration." });
         }
 
+        if (await PeriodExistsAsync(variant.Id, request.Date, feedConfig.Id, request.CollectionPeriod, consumption.Id, cancellationToken))
+        {
+            return Conflict(new { detail = "A feed entry already exists for this batch, feed type, date, and part of the day. Choose another part of the day, or update the existing entry." });
+        }
+
+        RestoreStock(consumption.CompanyId, consumption.FeedConfigurationId, consumption.FeedType, consumption.BagSizeKg ?? 0, consumption.BagsUsed);
         if (!await ConsumeStockAsync(variant.Batch!.CompanyId, feedConfig.Id, LegacyFeedTypeFromName(feedConfig.Name), feedConfig.BagSizeKg, request.BagsUsed, cancellationToken))
         {
             return BadRequest(new { detail = "Insufficient feed stock for the selected feed type and bag size." });
@@ -377,6 +388,7 @@ public sealed class FeedController(
         consumption.BatchId = variant.BatchId;
         consumption.BatchVariantId = variant.Id;
         consumption.Date = request.Date;
+        consumption.CollectionPeriod = request.CollectionPeriod;
         consumption.FeedConfigurationId = feedConfig.Id;
         consumption.FeedType = LegacyFeedTypeFromName(feedConfig.Name);
         consumption.BagSizeKg = feedConfig.BagSizeKg;
@@ -777,6 +789,7 @@ public sealed class FeedController(
         record.BatchVariantId,
         record.BatchVariant?.Color ?? VariantColor.Mixed,
         record.Date,
+        record.CollectionPeriod,
         record.FeedType,
         record.FeedConfigurationId,
         record.FeedConfiguration?.Name ?? DisplayFeedType(record.FeedType),
@@ -850,6 +863,20 @@ public sealed class FeedController(
         return FeedType.LayerPremium;
     }
 
+    private Task<bool> PeriodExistsAsync(
+        Guid batchVariantId,
+        DateOnly date,
+        Guid feedConfigurationId,
+        EggCollectionPeriod collectionPeriod,
+        Guid? exceptId,
+        CancellationToken cancellationToken) =>
+        dbContext.FeedConsumptions.AnyAsync(x =>
+            x.BatchVariantId == batchVariantId &&
+            x.Date == date &&
+            x.FeedConfigurationId == feedConfigurationId &&
+            x.CollectionPeriod == collectionPeriod &&
+            (exceptId == null || x.Id != exceptId), cancellationToken);
+
     private static string DisplayName(ApplicationUser user)
     {
         var name = $"{user.FirstName} {user.LastName}".Trim();
@@ -874,6 +901,7 @@ public sealed record FeedConsumptionDto(
     Guid BatchVariantId,
     VariantColor BirdColor,
     DateOnly Date,
+    EggCollectionPeriod CollectionPeriod,
     FeedType FeedType,
     Guid? FeedConfigurationId,
     string FeedTypeLabel,
@@ -901,6 +929,7 @@ public sealed record FeedStockLotDto(
 public sealed record FeedConsumptionRequest(
     Guid BatchVariantId,
     DateOnly Date,
+    EggCollectionPeriod CollectionPeriod,
     Guid FeedConfigurationId,
     int BagsUsed,
     string? Notes);

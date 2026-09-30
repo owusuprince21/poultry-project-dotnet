@@ -66,9 +66,11 @@ public sealed class FeedConsumptionConfiguration : IEntityTypeConfiguration<Feed
         builder.ToTable("FeedConsumptions");
         builder.HasQueryFilter(x => !x.IsDeleted);
         builder.Property(x => x.FeedType).HasConversion<string>().HasMaxLength(30);
+        builder.Property(x => x.CollectionPeriod).HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.AmountKg).HasPrecision(12, 2);
         builder.Property(x => x.CostPerKg).HasPrecision(12, 2);
         builder.Property(x => x.Supplier).HasMaxLength(200);
+        builder.HasIndex(x => new { x.BatchVariantId, x.Date, x.FeedConfigurationId, x.CollectionPeriod }).IsUnique();
     }
 }
 

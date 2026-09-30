@@ -760,6 +760,11 @@ namespace PoultryFarm.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("BatchVariantId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CollectionPeriod")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<Guid>("CompanyId")
                         .HasColumnType("uuid");
 
@@ -815,6 +820,9 @@ namespace PoultryFarm.Infrastructure.Persistence.Migrations
                     b.HasIndex("CompanyId");
 
                     b.HasIndex("FeedConfigurationId");
+
+                    b.HasIndex("BatchVariantId", "Date", "FeedConfigurationId", "CollectionPeriod")
+                        .IsUnique();
 
                     b.ToTable("FeedConsumptions", (string)null);
                 });

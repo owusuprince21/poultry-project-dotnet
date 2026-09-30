@@ -74,10 +74,17 @@
                     <MudTabPanel Text="Daily Feed Consumption" Icon="@Icons.Material.Filled.Restaurant">
                         <MudText Typo="Typo.h6" Class="font-semibold mt-3">@(_editingConsumptionId.HasValue ? "Update Feed Consumption" : "Feed Consumption Record")</MudText>
                         <MudGrid Spacing="2" Class="mt-1">
-                            <MudItem xs="12" md="6">
+                            <MudItem xs="12" md="4">
                                 <MudDatePicker Label="Date" @bind-Date="_consumptionDate" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" />
                             </MudItem>
-                            <MudItem xs="12" md="6">
+                            <MudItem xs="12" md="4">
+                                <MudSelect T="int" Label="Part of day" @bind-Value="_consumption.CollectionPeriod" Variant="Variant.Outlined" Margin="Margin.Dense">
+                                    <MudSelectItem T="int" Value="0">Morning</MudSelectItem>
+                                    <MudSelectItem T="int" Value="1">Afternoon</MudSelectItem>
+                                    <MudSelectItem T="int" Value="2">Evening</MudSelectItem>
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="12" md="4">
                                 <MudTextField T="string" Label="Batch" Value="@SelectedBatchText" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="true" />
                             </MudItem>
                             <MudItem xs="12" md="6">
@@ -181,6 +188,7 @@
                     <MudTable Items="_consumptionRows" Dense="true" Hover="true" Loading="_loading" Elevation="0" RowsPerPage="10">
                         <HeaderContent>
                             <MudTh>Date</MudTh>
+                            <MudTh>Part of day</MudTh>
                             <MudTh>Batch</MudTh>
                             <MudTh>Feed</MudTh>
                             <MudTh>Bags</MudTh>
@@ -189,6 +197,7 @@
                         </HeaderContent>
                         <RowTemplate>
                             <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
+                            <MudTd>@DisplayPeriod(context.CollectionPeriod)</MudTd>
                             <MudTd>@context.BatchNumber</MudTd>
                             <MudTd>@context.FeedTypeLabel</MudTd>
                             <MudTd>@context.BagsUsed.ToString("N0") x @context.BagSizeKg kg</MudTd>
@@ -473,6 +482,7 @@
         _selectedBatchId = row.BatchId;
         _selectedVariantId = row.BatchVariantId;
         _consumptionDate = row.Date.ToDateTime(TimeOnly.MinValue);
+        _consumption.CollectionPeriod = row.CollectionPeriod;
         _consumption.FeedConfigurationId = row.FeedConfigurationId;
         _consumption.BagsUsed = row.BagsUsed;
         _consumption.Notes = row.Notes;
@@ -592,6 +602,14 @@
         return path.Contains('?', StringComparison.Ordinal) ? $"{path}&{CompanyQuery}" : $"{path}?{CompanyQuery}";
     }
 
+    private static string DisplayPeriod(int period) =>
+        period switch
+        {
+            1 => "Afternoon",
+            2 => "Evening",
+            _ => "Morning"
+        };
+
     private static string DisplayColor(int color) =>
         color switch
         {
@@ -605,10 +623,11 @@
 
     private TableExportPayload BuildConsumptionExportPayload()
     {
-        var headers = new[] { "Date", "Batch", "Feed", "Bags", "Total KG" };
+        var headers = new[] { "Date", "Part of day", "Batch", "Feed", "Bags", "Total KG" };
         var rows = _consumptionRows.Select(x => (IReadOnlyList<string>)
         [
             x.Date.ToString("MMM d, yyyy"),
+            DisplayPeriod(x.CollectionPeriod),
             x.BatchNumber,
             x.FeedTypeLabel,
             $"{x.BagsUsed:N0} x {x.BagSizeKg} kg",
@@ -641,19 +660,21 @@
     private sealed record FeedMetrics(int TotalBagsInStock = 0, decimal TotalKgInStock = 0, decimal WeeklyAverageKg = 0, decimal TodayUsageKg = 0);
     private sealed record PagedConsumptionResponse(List<FeedConsumptionRow> Items, int Total, int Page, int PageSize);
     private sealed record PagedStockResponse(List<FeedStockRow> Items, int Total, int Page, int PageSize);
-    private sealed record FeedConsumptionRow(Guid Id, Guid CompanyId, Guid BatchId, string BatchNumber, Guid BatchVariantId, int BirdColor, DateOnly Date, int FeedType, Guid? FeedConfigurationId, string FeedTypeLabel, int BagSizeKg, int BagsUsed, decimal TotalKg, string? Notes);
+    private sealed record FeedConsumptionRow(Guid Id, Guid CompanyId, Guid BatchId, string BatchNumber, Guid BatchVariantId, int BirdColor, DateOnly Date, int CollectionPeriod, int FeedType, Guid? FeedConfigurationId, string FeedTypeLabel, int BagSizeKg, int BagsUsed, decimal TotalKg, string? Notes);
     private sealed record FeedStockRow(Guid Id, Guid CompanyId, DateOnly DateArrived, int FeedType, Guid? FeedConfigurationId, string FeedTypeLabel, string Supplier, int BagSizeKg, int BagsIn, int BagsRemaining, decimal CostPerBag, decimal TotalCost, decimal TotalKgRemaining, string? Condition);
 
     private sealed record FeedConsumptionForm
     {
         public Guid BatchVariantId { get; init; }
         public DateOnly Date { get; init; } = DateOnly.FromDateTime(DateTime.Today);
+        public int CollectionPeriod { get; set; }
         public Guid? FeedConfigurationId { get; set; }
         public int BagsUsed { get; set; }
         public string? Notes { get; set; }
 
         public void Reset()
         {
+            CollectionPeriod = 0;
             FeedConfigurationId = null;
             BagsUsed = 0;
             Notes = null;
