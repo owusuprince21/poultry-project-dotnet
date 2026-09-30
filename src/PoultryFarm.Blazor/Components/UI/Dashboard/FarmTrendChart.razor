@@ -1,0 +1,107 @@
+@using MudBlazor
+
+<MudPaper Class="work-surface" Elevation="0">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+        <div>
+            <MudText Typo="Typo.h6" Class="font-semibold">Eggs and feed, last 7 days</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">Hover a day to see that day's egg count and feed used.</MudText>
+        </div>
+    </MudStack>
+
+    @if (Points.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">No daily totals yet.</MudText>
+    }
+    else
+    {
+        <div class="farm-trend">
+            <svg viewBox="0 0 700 250" role="img" aria-label="Line chart of egg production and feed consumption for the last 7 days">
+                @for (var line = 0; line < 4; line++)
+                {
+                    var y = 28 + line * 48;
+                    <line x1="48" y1="@y" x2="660" y2="@y" class="farm-trend-grid" />
+                }
+                <polyline points="@EggPoints" class="farm-trend-line eggs" />
+                <polyline points="@FeedPoints" class="farm-trend-line feed" />
+                @for (var index = 0; index < Points.Count; index++)
+                {
+                    var point = Points[index];
+                    var active = _hover == index;
+                    <circle cx="@X(index)" cy="@EggY(point.Eggs)" r="@(active ? 6 : 4)" class="farm-trend-dot eggs" />
+                    <circle cx="@X(index)" cy="@FeedY(point.FeedKg)" r="@(active ? 6 : 4)" class="farm-trend-dot feed" />
+                    @if (active)
+                    {
+                        <line x1="@X(index)" y1="28" x2="@X(index)" y2="220" class="farm-trend-guide" />
+                    }
+                }
+            </svg>
+            <div class="farm-trend-axis">
+                @foreach (var point in Points)
+                {
+                    <span>@point.Label</span>
+                }
+            </div>
+            <div class="farm-trend-hits">
+                @for (var index = 0; index < Points.Count; index++)
+                {
+                    var captured = index;
+                    <button type="button"
+                            class="farm-trend-hit"
+                            aria-label="@HoverLabel(captured)"
+                            @onmouseenter="@(() => _hover = captured)"
+                            @onfocus="@(() => _hover = captured)"
+                            @onmouseleave="ClearHover"
+                            @onblur="ClearHover"></button>
+                }
+            </div>
+            @if (_hover is int tip)
+            {
+                <div class="farm-trend-tip @(tip > Points.Count / 2 ? "is-end" : null)" style="@($"left:{TipLeft(tip)}")">
+                    <strong>@Points[tip].Label</strong>
+                    <span>Eggs @Points[tip].Eggs.ToString("N0")</span>
+                    <span>Feed @Points[tip].FeedKg.ToString("N1") kg</span>
+                </div>
+            }
+        </div>
+        <div class="farm-trend-legend">
+            <span><i class="eggs"></i> Eggs</span>
+            <span><i class="feed"></i> Feed kg</span>
+        </div>
+    }
+</MudPaper>
+
+@code {
+    private int? _hover;
+
+    [Parameter]
+    public IReadOnlyList<FarmDayTrend> Points { get; set; } = [];
+
+    private int EggMax => Math.Max(1, Points.Count == 0 ? 1 : Points.Max(x => x.Eggs));
+    private decimal FeedMax => Points.Count == 0 ? 1 : Math.Max(1, Points.Max(x => x.FeedKg));
+    private string EggPoints => string.Join(' ', Points.Select((point, index) => $"{X(index):0.##},{EggY(point.Eggs):0.##}"));
+    private string FeedPoints => string.Join(' ', Points.Select((point, index) => $"{X(index):0.##},{FeedY(point.FeedKg):0.##}"));
+
+    private double X(int index) =>
+        Points.Count <= 1 ? 354 : 48 + index * (612d / (Points.Count - 1));
+
+    private double EggY(int eggs) => PlotY(eggs, EggMax);
+    private double FeedY(decimal kg) => PlotY((double)kg, (double)FeedMax);
+
+    private static double PlotY(double value, double max)
+    {
+        const double top = 28;
+        const double bottom = 220;
+        var ratio = max <= 0 ? 0 : Math.Clamp(value / max, 0, 1);
+        return bottom - ratio * (bottom - top);
+    }
+
+    private string TipLeft(int index) => $"{(index + 0.5) / Points.Count * 100:0.##}%";
+
+    private string HoverLabel(int index)
+    {
+        var point = Points[index];
+        return $"{point.Label}: {point.Eggs:N0} eggs, {point.FeedKg:N1} kg feed";
+    }
+
+    private void ClearHover() => _hover = null;
+}

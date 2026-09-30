@@ -16,4 +16,12 @@ public sealed record DashboardStatsDto(
     decimal WeeklySalesRevenue,
     int WeeklyEggsSold,
     int WeeklyBirdsSold,
-    int WeeklyHealthEvents);
+    int WeeklyHealthEvents,
+    int SickBirds,
+    int DeadBirds,
+    IReadOnlyList<FarmDayTrendDto> Days);
+
+public sealed record FarmDayTrendDto(
+    string Label,
+    int Eggs,
+    decimal FeedKg);

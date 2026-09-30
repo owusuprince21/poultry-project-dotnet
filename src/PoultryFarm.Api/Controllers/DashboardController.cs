@@ -84,6 +84,42 @@ public sealed class DashboardController(
         var weeklyEggsSold = await allEggSaleItems.Where(x => x.EggSale!.SaleDate >= weekAgo).SumAsync(x => x.Eggs, cancellationToken);
         var weeklyBirdsSold = await birdSales.Where(x => x.SaleDate >= weekAgo).SumAsync(x => x.BirdsSold, cancellationToken);
 
+        var trendStart = today.AddDays(-6);
+        var eggByDay = await allEggProduction
+            .Where(x => x.Date >= trendStart && x.Date <= today)
+            .GroupBy(x => x.Date)
+            .Select(g => new
+            {
+                Date = g.Key,
+                Eggs = g.Sum(x => x.SmallEggs + x.MediumEggs + x.LargeEggs + x.ExtraLargeEggs + x.UnsortedEggs)
+            })
+            .ToListAsync(cancellationToken);
+        var feedTrend = dbContext.FeedConsumptions.AsNoTracking().Where(x => x.Date >= trendStart && x.Date <= today);
+        if (companyScope.HasValue)
+        {
+            feedTrend = feedTrend.Where(x => x.CompanyId == companyScope.Value);
+        }
+
+        var feedByDay = await feedTrend
+            .GroupBy(x => x.Date)
+            .Select(g => new { Date = g.Key, Kg = g.Sum(x => x.AmountKg) })
+            .ToListAsync(cancellationToken);
+        var days = Enumerable.Range(0, 7)
+            .Select(offset => trendStart.AddDays(offset))
+            .Select(day => new FarmDayTrendDto(
+                day.ToString("ddd d"),
+                eggByDay.Where(x => x.Date == day).Sum(x => x.Eggs),
+                feedByDay.Where(x => x.Date == day).Sum(x => x.Kg)))
+            .ToArray();
+
+        var sickBirds = dbContext.BirdHealthEvents.AsNoTracking().Where(x => x.Status == BirdHealthStatus.Sick);
+        var deadBirds = dbContext.BirdHealthEvents.AsNoTracking().Where(x => x.Status == BirdHealthStatus.Dead);
+        if (companyScope.HasValue)
+        {
+            sickBirds = sickBirds.Where(x => x.CompanyId == companyScope.Value);
+            deadBirds = deadBirds.Where(x => x.CompanyId == companyScope.Value);
+        }
+
         return Ok(new DashboardStatsDto(
             totalActiveBirds,
             todayEggs,
@@ -100,7 +136,10 @@ public sealed class DashboardController(
             weeklyEggRevenue + weeklyBirdRevenue,
             weeklyEggsSold,
             weeklyBirdsSold,
-            await healthEvents.CountAsync(cancellationToken)));
+            await healthEvents.CountAsync(cancellationToken),
+            Math.Max(0, await sickBirds.SumAsync(x => x.Count, cancellationToken)),
+            await deadBirds.SumAsync(x => x.Count, cancellationToken),
+            days));
     }
 
     [Authorize]

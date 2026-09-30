@@ -66,20 +66,26 @@
 </MudGrid>
 
 <MudGrid Spacing="3" Class="mt-4">
+    <MudItem xs="12">
+        <FarmTrendChart Points="@(_stats?.Days ?? [])" />
+    </MudItem>
     <MudItem xs="12" lg="8">
         <DashboardModuleTable Title="Assigned Work Modules"
                               Items="@Modules" />
     </MudItem>
 
     <MudItem xs="12" lg="4">
+        <MudStack Spacing="3">
+            <MortalityPieChart SickBirds="@(_stats?.SickBirds ?? 0)" DeadBirds="@(_stats?.DeadBirds ?? 0)" Href="/health" />
         <DashboardMessagesCard Title="Task Messages"
                                AlertMessage="Use the operations pages to record today's work. Farm admins see these signals in their dashboard."
                                Items="@Messages" />
+        </MudStack>
     </MudItem>
 </MudGrid>
 
 @code {
-    private DashboardStats? _stats;
+    private FarmDashboardStats? _stats;
     private int OpenTasks => (_stats?.OverdueMedications ?? 0) + (_stats?.OverdueDebeaking ?? 0);
     private Color TaskColor => OpenTasks > 0 ? Color.Warning : Color.Success;
 
@@ -93,11 +99,10 @@
 
     private IReadOnlyCollection<DashboardModuleItem> Modules =>
     [
-        new("Egg production entry", $"{(_stats?.TodayEggProduction ?? 0):N0} eggs recorded today", "High", Color.Success),
-        new("Feed usage record", $"{(_stats?.WeeklyFeedConsumption ?? 0):N1} kg recorded in 7 days", "High", Color.Success),
-        new("Bird health observations", $"{(_stats?.WeeklyHealthEvents ?? 0):N0} events this week", "High", (_stats?.WeeklyHealthEvents ?? 0) > 0 ? Color.Warning : Color.Success),
-        new("Medication and debeaking", $"{OpenTasks:N0} overdue assigned tasks", "High", OpenTasks > 0 ? Color.Warning : Color.Success),
-        new("Sales support", $"GHS {(_stats?.WeeklySalesRevenue ?? 0):N2} weekly revenue", "Medium", Color.Info)
+        new("Egg production", $"{(_stats?.TodayEggProduction ?? 0):N0} eggs recorded today", "High", Color.Success, "/production"),
+        new("Feed", $"{(_stats?.WeeklyFeedConsumption ?? 0):N1} kg recorded in 7 days", "High", Color.Success, "/feed"),
+        new("Bird health", $"{(_stats?.SickBirds ?? 0):N0} sick, {(_stats?.DeadBirds ?? 0):N0} dead", "High", (_stats?.SickBirds ?? 0) + (_stats?.DeadBirds ?? 0) > 0 ? Color.Warning : Color.Success, "/health"),
+        new("Sales", $"GHS {(_stats?.WeeklySalesRevenue ?? 0):N2} weekly revenue", "Medium", Color.Info, "/sales")
     ];
 
     private IReadOnlyCollection<DashboardMessageItem> Messages =>
@@ -124,31 +129,13 @@
         {
             var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
-            _stats = await client.GetFromJsonAsync<DashboardStats>("/api/dashboard/stats");
+            _stats = await client.GetFromJsonAsync<FarmDashboardStats>("/api/dashboard/stats");
         }
         catch (Exception ex)
         {
             Snackbar.Add($"Worker dashboard metrics could not load: {ex.Message}", Severity.Error);
         }
     }
-
-    private sealed record DashboardStats(
-        int TotalActiveBirds,
-        int TodayEggProduction,
-        decimal WeeklyFeedConsumption,
-        int OverdueMedications,
-        int OverdueDebeaking,
-        int LowFeedStock,
-        int CurrentBatchAge,
-        decimal ProductionRate,
-        int ActiveBatches,
-        int EggInventory,
-        decimal FeedStockKg,
-        decimal TodaySalesRevenue,
-        decimal WeeklySalesRevenue,
-        int WeeklyEggsSold,
-        int WeeklyBirdsSold,
-        int WeeklyHealthEvents);
 
     private static string Crates(int eggs) => $"{eggs / 30m:N2} crates";
 }

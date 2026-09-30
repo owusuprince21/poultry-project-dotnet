@@ -440,6 +440,8 @@ h1:focus {
 .dashboard-overview-stat {
     display: grid;
     align-content: center;
+    width: 100%;
+    height: 100%;
     min-height: 6.5rem;
     gap: .25rem;
     padding: 1rem;
@@ -493,13 +495,177 @@ h1:focus {
     background: #eff6ff;
 }
 
+.mud-grid-item:has(.metric-card),
+.mud-grid-item:has(.dashboard-overview-stat) {
+    display: flex;
+}
+
 .metric-card {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 1rem;
-    min-height: 7rem;
+    width: 100%;
+    height: 100%;
+    min-height: 8.5rem;
     padding: 1.25rem;
     transition: transform .14s ease, box-shadow .14s ease;
+}
+
+.metric-card > div {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.farm-trend {
+    position: relative;
+}
+
+.farm-trend svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.farm-trend-grid {
+    stroke: #e2e8f0;
+    stroke-width: 1;
+}
+
+.farm-trend-line {
+    fill: none;
+    stroke-width: 3;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.farm-trend-line.eggs,
+.farm-trend-dot.eggs,
+.farm-trend-legend .eggs {
+    stroke: #059669;
+    background: #059669;
+}
+
+.farm-trend-dot.eggs {
+    fill: #059669;
+}
+
+.farm-trend-line.feed,
+.farm-trend-dot.feed,
+.farm-trend-legend .feed {
+    stroke: #d97706;
+    background: #d97706;
+}
+
+.farm-trend-dot.feed {
+    fill: #d97706;
+}
+
+.farm-trend-guide {
+    stroke: #94a3b8;
+    stroke-dasharray: 4 4;
+}
+
+.farm-trend-label {
+    fill: #475569;
+    font-size: 12px;
+}
+
+.farm-trend-hits {
+    position: absolute;
+    inset: 0 4% 12% 7%;
+    display: flex;
+}
+
+.farm-trend-hit {
+    flex: 1;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    cursor: crosshair;
+}
+
+.farm-trend-tip {
+    position: absolute;
+    top: .35rem;
+    z-index: 2;
+    display: grid;
+    gap: .1rem;
+    min-width: 8.5rem;
+    padding: .55rem .7rem;
+    border-radius: 8px;
+    background: #0f172a;
+    color: #fff;
+    font-size: .82rem;
+    pointer-events: none;
+    transform: translateX(-12%);
+}
+
+.farm-trend-tip.is-end {
+    transform: translateX(-88%);
+}
+
+.farm-trend-tip strong {
+    font-size: .78rem;
+}
+
+.farm-trend-legend {
+    display: flex;
+    gap: 1rem;
+    margin-top: .35rem;
+    color: #334155;
+    font-size: .85rem;
+    font-weight: 650;
+}
+
+.farm-trend-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+}
+
+.farm-trend-legend i {
+    width: .75rem;
+    height: .75rem;
+    border-radius: 999px;
+}
+
+.farm-trend-axis {
+    display: flex;
+    justify-content: space-between;
+    margin: -.35rem 7% 0 7%;
+    color: #475569;
+    font-size: .75rem;
+    font-weight: 650;
+}
+
+.farm-trend-legend .dead,
+.mortality-slice.dead {
+    background: #dc2626;
+    fill: #dc2626;
+}
+
+.mortality-pie {
+    position: relative;
+    max-width: 16rem;
+}
+
+.mortality-pie svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.mortality-slice {
+    cursor: pointer;
+}
+
+.mortality-slice.sick {
+    fill: #d97706;
+}
+
+.mortality-tip {
+    left: 58%;
+    top: 38%;
 }
 
 .metric-card:hover {

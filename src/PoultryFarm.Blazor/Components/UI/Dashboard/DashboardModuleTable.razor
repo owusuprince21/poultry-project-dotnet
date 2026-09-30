@@ -15,7 +15,14 @@
 
         <RowTemplate>
             <MudTd DataLabel="Module">
-                @context.Name
+                @if (string.IsNullOrWhiteSpace(context.Href))
+                {
+                    @context.Name
+                }
+                else
+                {
+                    <MudLink Href="@context.Href">@context.Name</MudLink>
+                }
             </MudTd>
 
             <MudTd DataLabel="Status">

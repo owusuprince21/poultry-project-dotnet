@@ -13,7 +13,31 @@ public sealed record DashboardModuleItem(
     string Name,
     string Status,
     string Priority,
-    Color Color);
+    Color Color,
+    string? Href = null);
+
+public sealed record FarmDayTrend(string Label, int Eggs, decimal FeedKg);
+
+public sealed record FarmDashboardStats(
+    int TotalActiveBirds,
+    int TodayEggProduction,
+    decimal WeeklyFeedConsumption,
+    int OverdueMedications,
+    int OverdueDebeaking,
+    int LowFeedStock,
+    int CurrentBatchAge,
+    decimal ProductionRate,
+    int ActiveBatches,
+    int EggInventory,
+    decimal FeedStockKg,
+    decimal TodaySalesRevenue,
+    decimal WeeklySalesRevenue,
+    int WeeklyEggsSold,
+    int WeeklyBirdsSold,
+    int WeeklyHealthEvents,
+    int SickBirds,
+    int DeadBirds,
+    IReadOnlyList<FarmDayTrend> Days);
 
 public sealed record DashboardMessageItem(
     string Text,

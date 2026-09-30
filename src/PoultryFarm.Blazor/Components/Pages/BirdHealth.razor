@@ -30,11 +30,14 @@
     else
     {
     <MudGrid Spacing="3">
-        <MudItem xs="12" md="6">
+        <MudItem xs="12" md="4">
             <DashboardMetricCard Label="Sick Birds" Value="@_metrics.SickBirds.ToString("N0")" Detail="active sick bird balance" Icon="@Icons.Material.Filled.HealthAndSafety" Color="Color.Warning" />
         </MudItem>
-        <MudItem xs="12" md="6">
+        <MudItem xs="12" md="4">
             <DashboardMetricCard Label="Dead Birds" Value="@_metrics.DeadBirds.ToString("N0")" Detail="deducted from batch count" Icon="@Icons.Material.Filled.HeartBroken" Color="Color.Error" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MortalityPieChart SickBirds="@_metrics.SickBirds" DeadBirds="@_metrics.DeadBirds" />
         </MudItem>
     </MudGrid>
 

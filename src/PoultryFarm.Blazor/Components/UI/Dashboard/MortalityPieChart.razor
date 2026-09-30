@@ -1,0 +1,84 @@
+@using MudBlazor
+
+<MudPaper Class="work-surface" Elevation="0">
+    <MudText Typo="Typo.h6" Class="font-semibold">Bird mortality</MudText>
+    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">Sick birds against recorded deaths. Hover a slice to see the count.</MudText>
+
+    @if (Total <= 0)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">No sick or dead birds recorded yet.</MudText>
+    }
+    else
+    {
+        <div class="mortality-pie">
+            <svg viewBox="0 0 220 220" role="img" aria-label="@($"Sick {SickBirds:N0}, dead {DeadBirds:N0}")">
+                @if (SickBirds > 0 && DeadBirds == 0)
+                {
+                    <circle cx="110" cy="110" r="80" class="mortality-slice sick" @onmouseenter="@(() => _hover = "sick")" @onmouseleave="ClearHover" />
+                }
+                else if (DeadBirds > 0 && SickBirds == 0)
+                {
+                    <circle cx="110" cy="110" r="80" class="mortality-slice dead" @onmouseenter="@(() => _hover = "dead")" @onmouseleave="ClearHover" />
+                }
+                else
+                {
+                    <path d="@SlicePath(0, SickSweep)" class="mortality-slice sick" @onmouseenter="@(() => _hover = "sick")" @onmouseleave="ClearHover" />
+                    <path d="@SlicePath(SickSweep, 360)" class="mortality-slice dead" @onmouseenter="@(() => _hover = "dead")" @onmouseleave="ClearHover" />
+                }
+            </svg>
+            @if (_hover is not null)
+            {
+                <div class="farm-trend-tip mortality-tip">
+                    <strong>@(_hover == "sick" ? "Sick" : "Dead")</strong>
+                    <span>@((_hover == "sick" ? SickBirds : DeadBirds).ToString("N0")) birds</span>
+                </div>
+            }
+        </div>
+        <div class="farm-trend-legend">
+            <span><i class="feed"></i> Sick @SickBirds.ToString("N0")</span>
+            <span><i class="dead"></i> Dead @DeadBirds.ToString("N0")</span>
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Href))
+    {
+        <MudButton Href="@Href" Variant="Variant.Text" Color="Color.Primary" Class="mt-2" EndIcon="@Icons.Material.Filled.ArrowForward">
+            Open bird health
+        </MudButton>
+    }
+</MudPaper>
+
+@code {
+    private string? _hover;
+
+    [Parameter]
+    public int SickBirds { get; set; }
+
+    [Parameter]
+    public int DeadBirds { get; set; }
+
+    [Parameter]
+    public string? Href { get; set; }
+
+    private int Total => Math.Max(0, SickBirds) + Math.Max(0, DeadBirds);
+    private double SickSweep => Total == 0 ? 0 : SickBirds / (double)Total * 360d;
+
+    private static string SlicePath(double start, double end)
+    {
+        const double cx = 110;
+        const double cy = 110;
+        const double radius = 80;
+        var (x1, y1) = Point(start, cx, cy, radius);
+        var (x2, y2) = Point(end, cx, cy, radius);
+        var large = end - start > 180 ? 1 : 0;
+        return FormattableString.Invariant($"M {cx} {cy} L {x1:0.##} {y1:0.##} A {radius} {radius} 0 {large} 1 {x2:0.##} {y2:0.##} Z");
+    }
+
+    private static (double X, double Y) Point(double angle, double cx, double cy, double radius)
+    {
+        var radians = (angle - 90) * Math.PI / 180d;
+        return (cx + radius * Math.Cos(radians), cy + radius * Math.Sin(radians));
+    }
+
+    private void ClearHover() => _hover = null;
+}

@@ -18,7 +18,7 @@
             <MudText Typo="Typo.overline" Color="Color.Secondary">Farm Overview</MudText>
             <MudText Typo="Typo.h5" Class="font-bold">@AuthSession.WorkspaceTitle</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
-                @((_stats?.ActiveBatches ?? 0).ToString("N0")) active batches, @((_stats?.TotalActiveBirds ?? 0).ToString("N0")) birds, and @Crates(_stats?.EggInventory ?? 0) eggs available.
+                @((_stats?.ActiveBatches ?? 0).ToString("N0")) active batches, @((_stats?.TotalActiveBirds ?? 0).ToString("N0")) birds, @Crates(_stats?.EggInventory ?? 0) eggs on hand, and @((_stats?.FeedStockKg ?? 0).ToString("N1")) kg feed. Open any row below to see the records.
             </MudText>
         </MudItem>
         <MudItem xs="12" sm="6" lg="2">
@@ -66,20 +66,25 @@
 </MudGrid>
 
 <MudGrid Spacing="3" Class="mt-4">
+    <MudItem xs="12">
+        <FarmTrendChart Points="@(_stats?.Days ?? [])" />
+    </MudItem>
     <MudItem xs="12" lg="7">
-        <DashboardModuleTable Title="Farm Operations Modules"
+        <DashboardModuleTable Title="Farm operations"
                               Items="@Modules" />
     </MudItem>
-
     <MudItem xs="12" lg="5">
-        <DashboardMessagesCard Title="Operational Signals"
-                               AlertMessage="@SignalMessage"
-                               Items="@Messages" />
+        <MudStack Spacing="3">
+            <MortalityPieChart SickBirds="@(_stats?.SickBirds ?? 0)" DeadBirds="@(_stats?.DeadBirds ?? 0)" Href="/health" />
+            <DashboardMessagesCard Title="Operational Signals"
+                                   AlertMessage="@SignalMessage"
+                                   Items="@Messages" />
+        </MudStack>
     </MudItem>
 </MudGrid>
 
 @code {
-    private DashboardStats? _stats;
+    private FarmDashboardStats? _stats;
     private bool _loaded;
     private int OpenAlerts => (_stats?.OverdueMedications ?? 0) + (_stats?.OverdueDebeaking ?? 0) + (_stats?.LowFeedStock ?? 0);
     private Color AlertColor => OpenAlerts > 0 ? Color.Error : Color.Success;
@@ -94,11 +99,13 @@
 
     private IReadOnlyCollection<DashboardModuleItem> Modules =>
     [
-        new("Flock and batches", $"{(_stats?.ActiveBatches ?? 0):N0} active batches, newest age {(_stats?.CurrentBatchAge ?? 0):N0} weeks", "High", Color.Success),
-        new("Egg inventory", $"{(_stats?.EggInventory ?? 0):N0} eggs available ({Crates(_stats?.EggInventory ?? 0)})", "High", Color.Success),
-        new("Feed and inventory", $"{(_stats?.LowFeedStock ?? 0):N0} low-stock alerts from {(_stats?.FeedStockKg ?? 0):N1} kg on hand", "High", (_stats?.LowFeedStock ?? 0) > 0 ? Color.Warning : Color.Success),
-        new("Medication and health", $"{(_stats?.OverdueMedications ?? 0):N0} medication / {(_stats?.WeeklyHealthEvents ?? 0):N0} health events", "High", (_stats?.OverdueMedications ?? 0) > 0 ? Color.Warning : Color.Success),
-        new("Sales performance", $"{(_stats?.WeeklyEggsSold ?? 0):N0} eggs and {(_stats?.WeeklyBirdsSold ?? 0):N0} birds sold in 7 days", "Medium", Color.Info)
+        new("Batches", $"{(_stats?.ActiveBatches ?? 0):N0} active batches, newest age {(_stats?.CurrentBatchAge ?? 0):N0} weeks", "High", Color.Success, "/batches"),
+        new("Egg production", $"{(_stats?.TodayEggProduction ?? 0):N0} eggs today, {(_stats?.EggInventory ?? 0):N0} in stock", "High", Color.Success, "/production"),
+        new("Feed", $"{(_stats?.LowFeedStock ?? 0):N0} low-stock alerts, {(_stats?.FeedStockKg ?? 0):N1} kg on hand", "High", (_stats?.LowFeedStock ?? 0) > 0 ? Color.Warning : Color.Success, "/feed"),
+        new("Medication", $"{(_stats?.OverdueMedications ?? 0):N0} overdue schedules", "High", (_stats?.OverdueMedications ?? 0) > 0 ? Color.Warning : Color.Success, "/medication"),
+        new("Bird health", $"{(_stats?.SickBirds ?? 0):N0} sick, {(_stats?.DeadBirds ?? 0):N0} dead", "High", (_stats?.SickBirds ?? 0) + (_stats?.DeadBirds ?? 0) > 0 ? Color.Warning : Color.Success, "/health"),
+        new("Debeaking", $"{(_stats?.OverdueDebeaking ?? 0):N0} overdue schedules", "Medium", (_stats?.OverdueDebeaking ?? 0) > 0 ? Color.Warning : Color.Success, "/debeaking"),
+        new("Sales", $"{(_stats?.WeeklyEggsSold ?? 0):N0} eggs and {(_stats?.WeeklyBirdsSold ?? 0):N0} birds sold in 7 days", "Medium", Color.Info, "/sales")
     ];
 
     private IReadOnlyCollection<DashboardMessageItem> Messages =>
@@ -131,31 +138,13 @@
         {
             var client = HttpClientFactory.CreateClient("PoultryFarm.Api");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthSession.Token);
-            _stats = await client.GetFromJsonAsync<DashboardStats>("/api/dashboard/stats");
+            _stats = await client.GetFromJsonAsync<FarmDashboardStats>("/api/dashboard/stats");
         }
         catch (Exception ex)
         {
             Snackbar.Add($"Dashboard metrics could not load: {ex.Message}", Severity.Error);
         }
     }
-
-    private sealed record DashboardStats(
-        int TotalActiveBirds,
-        int TodayEggProduction,
-        decimal WeeklyFeedConsumption,
-        int OverdueMedications,
-        int OverdueDebeaking,
-        int LowFeedStock,
-        int CurrentBatchAge,
-        decimal ProductionRate,
-        int ActiveBatches,
-        int EggInventory,
-        decimal FeedStockKg,
-        decimal TodaySalesRevenue,
-        decimal WeeklySalesRevenue,
-        int WeeklyEggsSold,
-        int WeeklyBirdsSold,
-        int WeeklyHealthEvents);
 
     private static string Crates(int eggs) => $"{eggs / 30m:N2} crates";
 }
