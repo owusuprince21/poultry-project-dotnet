@@ -17,6 +17,7 @@ public sealed class EggProduction : AuditableEntity
     public DateOnly Date { get; set; }
     public EggColor EggColor { get; set; }
     public EggCollectionType CollectionType { get; set; }
+    public EggCollectionPeriod CollectionPeriod { get; set; } = EggCollectionPeriod.Morning;
     public int SmallEggs { get; private set; }
     public int MediumEggs { get; private set; }
     public int LargeEggs { get; private set; }

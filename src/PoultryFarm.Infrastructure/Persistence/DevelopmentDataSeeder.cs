@@ -18,7 +18,35 @@ public static class DevelopmentDataSeeder
         if (dbContext.Database.IsSqlServer())
         {
             var strategy = dbContext.Database.CreateExecutionStrategy();
-            await strategy.ExecuteAsync(() => dbContext.Database.EnsureCreatedAsync());
+            await strategy.ExecuteAsync(async () =>
+            {
+                await dbContext.Database.EnsureCreatedAsync();
+                await dbContext.Database.ExecuteSqlRawAsync("""
+                    IF COL_LENGTH('dbo.EggProductions', 'CollectionPeriod') IS NULL
+                    BEGIN
+                        ALTER TABLE dbo.EggProductions
+                        ADD CollectionPeriod nvarchar(20) NOT NULL
+                            CONSTRAINT DF_EggProductions_CollectionPeriod DEFAULT 'Morning';
+                    END
+
+                    IF EXISTS (
+                        SELECT 1 FROM sys.indexes
+                        WHERE name = 'IX_EggProductions_BatchVariantId_Date_CollectionType_EggColor'
+                          AND object_id = OBJECT_ID('dbo.EggProductions'))
+                    BEGIN
+                        DROP INDEX IX_EggProductions_BatchVariantId_Date_CollectionType_EggColor ON dbo.EggProductions;
+                    END
+
+                    IF NOT EXISTS (
+                        SELECT 1 FROM sys.indexes
+                        WHERE name = 'IX_EggProductions_BatchVariantId_Date_CollectionPeriod_CollectionType_EggColor'
+                          AND object_id = OBJECT_ID('dbo.EggProductions'))
+                    BEGIN
+                        CREATE UNIQUE INDEX IX_EggProductions_BatchVariantId_Date_CollectionPeriod_CollectionType_EggColor
+                        ON dbo.EggProductions (BatchVariantId, [Date], CollectionPeriod, CollectionType, EggColor);
+                    END
+                    """);
+            });
             return;
         }
 

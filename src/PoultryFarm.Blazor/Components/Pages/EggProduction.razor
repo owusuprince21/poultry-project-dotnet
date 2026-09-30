@@ -106,10 +106,17 @@
                                 }
                             </MudSelect>
                         </MudItem>
-                        <MudItem xs="12" md="6">
+                        <MudItem xs="12" md="4">
                             <MudDatePicker Label="Production Date" @bind-Date="_productionDate" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" />
                         </MudItem>
-                        <MudItem xs="12" md="6">
+                        <MudItem xs="12" md="4">
+                            <MudSelect T="int" Label="Part of day" @bind-Value="_model.CollectionPeriod" Variant="Variant.Outlined" Margin="Margin.Dense">
+                                <MudSelectItem T="int" Value="0">Morning</MudSelectItem>
+                                <MudSelectItem T="int" Value="1">Afternoon</MudSelectItem>
+                                <MudSelectItem T="int" Value="2">Evening</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" md="4">
                             <MudSelect T="int" Label="Collection Type" @bind-Value="_model.CollectionType" Variant="Variant.Outlined" Margin="Margin.Dense">
                                 <MudSelectItem T="int" Value="0">Sorted</MudSelectItem>
                                 <MudSelectItem T="int" Value="1">Unsorted</MudSelectItem>
@@ -170,6 +177,7 @@
                         <MudTh>Date</MudTh>
                         <MudTh>Batch</MudTh>
                         <MudTh>Color</MudTh>
+                        <MudTh>Part of day</MudTh>
                         <MudTh>Type</MudTh>
                         <MudTh>Total Eggs</MudTh>
                         <MudTh></MudTh>
@@ -178,6 +186,7 @@
                         <MudTd>@context.Date.ToString("MMM d, yyyy")</MudTd>
                         <MudTd>@context.BatchNumber</MudTd>
                         <MudTd>@DisplayColor(context.BirdColor)</MudTd>
+                        <MudTd>@DisplayPeriod(context.CollectionPeriod)</MudTd>
                         <MudTd>@(context.CollectionType == 0 ? "Sorted" : "Unsorted")</MudTd>
                         <MudTd>@context.TotalEggs.ToString("N0")</MudTd>
                         <MudTd>
@@ -459,6 +468,7 @@
         _productionDate = row.Date.ToDateTime(TimeOnly.MinValue);
         _model.BatchVariantId = row.BatchVariantId;
         _model.CollectionType = row.CollectionType;
+        _model.CollectionPeriod = row.CollectionPeriod;
         _model.SmallCrates = row.SmallCrates;
         _model.SmallPieces = row.SmallPieces;
         _model.MediumCrates = row.MediumCrates;
@@ -511,6 +521,14 @@
         return client;
     }
 
+    private static string DisplayPeriod(int period) =>
+        period switch
+        {
+            1 => "Afternoon",
+            2 => "Evening",
+            _ => "Morning"
+        };
+
     private static string DisplayColor(int color) =>
         color switch
         {
@@ -524,12 +542,13 @@
 
     private TableExportPayload BuildExportPayload()
     {
-        var headers = new[] { "Date", "Batch", "Color", "Type", "Total Eggs" };
+        var headers = new[] { "Date", "Batch", "Color", "Part of day", "Type", "Total Eggs" };
         var rows = _records.Select(x => (IReadOnlyList<string>)
         [
             x.Date.ToString("MMM d, yyyy"),
             x.BatchNumber,
             DisplayColor(x.BirdColor),
+            DisplayPeriod(x.CollectionPeriod),
             x.CollectionType == 0 ? "Sorted" : "Unsorted",
             x.TotalEggs.ToString("N0")
         ]).ToList();
@@ -541,7 +560,7 @@
     private sealed record EggMetrics(int TotalEggs = 0, decimal TotalCrates = 0, int SelectedSizeEggs = 0, int Entries = 0, int SmallEggs = 0, int MediumEggs = 0, int LargeEggs = 0, int JumboEggs = 0, int UnsortedEggs = 0);
     private sealed record BatchOption(Guid Id, string BatchNumber, int BirdType, DateOnly ArrivalDate, string Breed, string? Supplier, DateOnly ExpectedSaleDate, int Status, int InitialCount, int CurrentCount, decimal SurvivalRate, List<BatchVariantOption> Variants);
     private sealed record BatchVariantOption(Guid Id, int Color, int EggColor, int InitialCount, int CurrentCount, string? Notes);
-    private sealed record EggProductionRow(Guid Id, Guid CompanyId, Guid BatchId, string BatchNumber, Guid BatchVariantId, int BirdColor, int EggColor, DateOnly Date, int CollectionType, int SmallCrates, int SmallPieces, int MediumCrates, int MediumPieces, int LargeCrates, int LargePieces, int JumboCrates, int JumboPieces, int UnsortedCrates, int UnsortedPieces, int SmallEggs, int MediumEggs, int LargeEggs, int JumboEggs, int UnsortedEggs, int TotalEggs, string? Notes);
+    private sealed record EggProductionRow(Guid Id, Guid CompanyId, Guid BatchId, string BatchNumber, Guid BatchVariantId, int BirdColor, int EggColor, DateOnly Date, int CollectionType, int CollectionPeriod, int SmallCrates, int SmallPieces, int MediumCrates, int MediumPieces, int LargeCrates, int LargePieces, int JumboCrates, int JumboPieces, int UnsortedCrates, int UnsortedPieces, int SmallEggs, int MediumEggs, int LargeEggs, int JumboEggs, int UnsortedEggs, int TotalEggs, string? Notes);
 
     private sealed record EggInputRow(string Label, Func<int> GetCrates, Action<int> SetCrates, Func<int> GetPieces, Action<int> SetPieces)
     {
@@ -554,6 +573,7 @@
         public Guid? BatchVariantId { get; set; }
         public DateOnly Date { get; init; } = DateOnly.FromDateTime(DateTime.Today);
         public int CollectionType { get; set; }
+        public int CollectionPeriod { get; set; }
         public int SmallCrates { get; set; }
         public int SmallPieces { get; set; }
         public int MediumCrates { get; set; }
@@ -570,6 +590,7 @@
         {
             BatchVariantId = null;
             CollectionType = 0;
+            CollectionPeriod = 0;
             SmallCrates = SmallPieces = MediumCrates = MediumPieces = LargeCrates = LargePieces = JumboCrates = JumboPieces = UnsortedCrates = UnsortedPieces = 0;
             Notes = null;
         }

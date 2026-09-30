@@ -16,7 +16,8 @@ public sealed class EggProductionConfiguration : IEntityTypeConfiguration<EggPro
         builder.HasQueryFilter(x => !x.IsDeleted);
         builder.Property(x => x.EggColor).HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.CollectionType).HasConversion<string>().HasMaxLength(20);
-        builder.HasIndex(x => new { x.BatchVariantId, x.Date, x.CollectionType, x.EggColor }).IsUnique();
+        builder.Property(x => x.CollectionPeriod).HasConversion<string>().HasMaxLength(20);
+        builder.HasIndex(x => new { x.BatchVariantId, x.Date, x.CollectionPeriod, x.CollectionType, x.EggColor }).IsUnique();
     }
 }
 

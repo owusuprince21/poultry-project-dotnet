@@ -136,6 +136,11 @@ public sealed class EggProductionController(
             return BadRequest(new { detail = "Select a valid batch color for your company." });
         }
 
+        if (await PeriodExistsAsync(variant.Id, request.Date, request.CollectionType, variant.EggColor, request.CollectionPeriod, null, cancellationToken))
+        {
+            return Conflict(new { detail = "An entry already exists for this batch color, date, and part of the day. Choose another part of the day, or update the existing entry." });
+        }
+
         var production = new EggProduction
         {
             CompanyId = variant.Batch!.CompanyId,
@@ -144,6 +149,7 @@ public sealed class EggProductionController(
             Date = request.Date,
             EggColor = variant.EggColor,
             CollectionType = request.CollectionType,
+            CollectionPeriod = request.CollectionPeriod,
             SmallCrates = request.SmallCrates,
             SmallPieces = request.SmallPieces,
             MediumCrates = request.MediumCrates,
@@ -198,12 +204,18 @@ public sealed class EggProductionController(
             return BadRequest(new { detail = "Select a valid batch color for your company." });
         }
 
+        if (await PeriodExistsAsync(variant.Id, request.Date, request.CollectionType, variant.EggColor, request.CollectionPeriod, production.Id, cancellationToken))
+        {
+            return Conflict(new { detail = "An entry already exists for this batch color, date, and part of the day. Choose another part of the day, or update the existing entry." });
+        }
+
         production.CompanyId = variant.Batch!.CompanyId;
         production.BatchId = variant.BatchId;
         production.BatchVariantId = variant.Id;
         production.Date = request.Date;
         production.EggColor = variant.EggColor;
         production.CollectionType = request.CollectionType;
+        production.CollectionPeriod = request.CollectionPeriod;
         production.SmallCrates = request.SmallCrates;
         production.SmallPieces = request.SmallPieces;
         production.MediumCrates = request.MediumCrates;
@@ -359,6 +371,7 @@ public sealed class EggProductionController(
         production.EggColor,
         production.Date,
         production.CollectionType,
+        production.CollectionPeriod,
         production.SmallCrates,
         production.SmallPieces,
         production.MediumCrates,
@@ -381,7 +394,7 @@ public sealed class EggProductionController(
     {
         var totalCrates = production.TotalEggs / EggProduction.EggsPerCrate;
         var totalPieces = production.TotalEggs % EggProduction.EggsPerCrate;
-        var header = $"{DisplayName(user)} recorded egg production for batch {variant.Batch?.BatchNumber ?? "Unknown"} ({variant.Batch?.Breed ?? "unknown breed"}), bird color {variant.Color}, on {production.Date:yyyy-MM-dd}.";
+        var header = $"{DisplayName(user)} recorded {production.CollectionPeriod.ToString().ToLowerInvariant()} egg production for batch {variant.Batch?.BatchNumber ?? "Unknown"} ({variant.Batch?.Breed ?? "unknown breed"}), bird color {variant.Color}, on {production.Date:yyyy-MM-dd}.";
 
         if (production.CollectionType == EggCollectionType.Unsorted)
         {
@@ -412,6 +425,22 @@ Observation: {Blank(production.Notes)}
         return string.IsNullOrWhiteSpace(name) ? user.UserName ?? "User" : name;
     }
 
+    private Task<bool> PeriodExistsAsync(
+        Guid batchVariantId,
+        DateOnly date,
+        EggCollectionType collectionType,
+        EggColor eggColor,
+        EggCollectionPeriod collectionPeriod,
+        Guid? exceptId,
+        CancellationToken cancellationToken) =>
+        dbContext.EggProductions.AnyAsync(x =>
+            x.BatchVariantId == batchVariantId &&
+            x.Date == date &&
+            x.CollectionType == collectionType &&
+            x.EggColor == eggColor &&
+            x.CollectionPeriod == collectionPeriod &&
+            (exceptId == null || x.Id != exceptId), cancellationToken);
+
     private static string Blank(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "none" : value.Trim();
 
@@ -441,6 +470,7 @@ public sealed record EggProductionDto(
     EggColor EggColor,
     DateOnly Date,
     EggCollectionType CollectionType,
+    EggCollectionPeriod CollectionPeriod,
     int SmallCrates,
     int SmallPieces,
     int MediumCrates,
@@ -463,6 +493,7 @@ public sealed record EggProductionRequest(
     Guid BatchVariantId,
     DateOnly Date,
     EggCollectionType CollectionType,
+    EggCollectionPeriod CollectionPeriod,
     int SmallCrates,
     int SmallPieces,
     int MediumCrates,

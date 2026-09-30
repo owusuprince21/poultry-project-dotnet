@@ -44,6 +44,13 @@ public enum EggCollectionType
     Unsorted = 1
 }
 
+public enum EggCollectionPeriod
+{
+    Morning = 0,
+    Afternoon = 1,
+    Evening = 2
+}
+
 public enum EggSize
 {
     Small = 0,

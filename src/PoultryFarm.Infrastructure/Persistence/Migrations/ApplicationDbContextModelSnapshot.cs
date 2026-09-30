@@ -1756,6 +1756,11 @@ namespace PoultryFarm.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
+                    b.Property<string>("CollectionPeriod")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<Guid>("CompanyId")
                         .HasColumnType("uuid");
 
@@ -1842,7 +1847,7 @@ namespace PoultryFarm.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CompanyId");
 
-                    b.HasIndex("BatchVariantId", "Date", "CollectionType", "EggColor")
+                    b.HasIndex("BatchVariantId", "Date", "CollectionPeriod", "CollectionType", "EggColor")
                         .IsUnique();
 
                     b.ToTable("EggProductions", (string)null);
