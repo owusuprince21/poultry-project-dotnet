@@ -99,10 +99,13 @@ public sealed class AiProviderClient(HttpClient httpClient, IConfiguration confi
                 }
             });
 
+            using var modelTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            modelTimeout.CancelAfter(TimeSpan.FromSeconds(25));
+
             try
             {
-                using var response = await httpClient.SendAsync(request, cancellationToken);
-                var result = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var response = await httpClient.SendAsync(request, modelTimeout.Token);
+                var result = await response.Content.ReadAsStringAsync(modelTimeout.Token);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -120,11 +123,14 @@ public sealed class AiProviderClient(HttpClient httpClient, IConfiguration confi
 
                 continue;
             }
-            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException ex)
             {
                 lastException = ex;
-                logger.LogWarning(ex, "Gemini request timed out for model {Model}.", model);
-                throw;
+                logger.LogWarning(ex, "Gemini request timed out for model {Model}. Trying the next model.", model);
             }
         }
 

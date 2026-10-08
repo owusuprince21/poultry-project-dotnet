@@ -189,9 +189,9 @@ else
             var startedAt = DateTimeOffset.UtcNow;
             var response = await CreateApiClient().PostAsJsonAsync("/api/assistance/messages", new { body = prompt });
             var elapsed = DateTimeOffset.UtcNow - startedAt;
-            if (elapsed.TotalMilliseconds < 1200)
+            if (elapsed.TotalMilliseconds < 350)
             {
-                await Task.Delay(1200 - (int)elapsed.TotalMilliseconds);
+                await Task.Delay(350 - (int)elapsed.TotalMilliseconds);
             }
 
             if (!response.IsSuccessStatusCode)
@@ -209,6 +209,12 @@ else
             await AddMessagesWithTypingAsync(newMessages);
             await InvokeAsync(StateHasChanged);
             await ScrollMessagesAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            Snackbar.Add("The farm assistant took too long to answer. Please try again.", Severity.Error);
+            _messages.Remove(pendingUserMessage);
+            _prompt = prompt;
         }
         finally
         {
@@ -284,14 +290,20 @@ else
         var visibleMessage = assistantMessage with { Body = string.Empty };
         _messages.Add(visibleMessage);
 
-        var chunkSize = assistantMessage.Body.Length > 900 ? 8 : 4;
+        var chunkSize = assistantMessage.Body.Length > 700 ? 36 : 20;
+        var step = 0;
         for (var index = 0; index < assistantMessage.Body.Length; index += chunkSize)
         {
             var current = assistantMessage.Body[..Math.Min(index + chunkSize, assistantMessage.Body.Length)];
             ReplaceMessage(assistantMessage.Id, assistantMessage with { Body = current });
             await InvokeAsync(StateHasChanged);
-            await ScrollMessagesAsync();
-            await Task.Delay(18);
+            if (step % 4 == 0)
+            {
+                await ScrollMessagesAsync();
+            }
+
+            step++;
+            await Task.Delay(6);
         }
 
         ReplaceMessage(assistantMessage.Id, assistantMessage);

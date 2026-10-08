@@ -90,7 +90,7 @@ public sealed class AssistanceController(
         };
 
         dbContext.FarmAssistanceMessages.Add(assistantMessage);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.SaveChangesAsync(CancellationToken.None);
 
         return Ok(new[]
         {
