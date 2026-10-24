@@ -97,5 +97,18 @@ window.poultryFarmUi = {
 
     isNarrow() {
         return window.innerWidth < 960;
+    },
+
+    focusCompose(element) {
+        if (!element) {
+            return;
+        }
+
+        const input = element.querySelector("textarea, input");
+        const target = input || element;
+        target.scrollIntoView({ block: "center", inline: "nearest" });
+        if (input) {
+            input.focus({ preventScroll: true });
+        }
     }
 };

@@ -97,13 +97,15 @@ else
                 }
             </div>
 
-            <div class="farm-assistant-compose">
-                <MudTextField @bind-Value="_prompt"
+            <div class="farm-assistant-compose" @ref="_composeContainer">
+                <MudTextField @ref="_promptField"
+                              @bind-Value="_prompt"
                               Placeholder="Ask the assistant about what is happening in the farm..."
                               Variant="Variant.Outlined"
                               Lines="2"
                               Margin="Margin.Dense"
                               Immediate="true"
+                              AutoFocus="true"
                               OnKeyDown="HandlePromptKeyDown"
                               Class="assistant-compose-input" />
                 <MudIconButton Icon="@Icons.Material.Filled.Send"
@@ -123,6 +125,8 @@ else
     private bool _sending;
     private bool _thinking;
     private ElementReference _messagesContainer;
+    private ElementReference _composeContainer;
+    private MudTextField<string>? _promptField;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -152,6 +156,7 @@ else
         _loaded = true;
         await InvokeAsync(StateHasChanged);
         await ScrollMessagesAsync();
+        await FocusPromptAsync();
     }
 
     private async Task LoadAsync()
@@ -222,6 +227,7 @@ else
             _thinking = false;
             await InvokeAsync(StateHasChanged);
             await ScrollMessagesAsync();
+            await FocusPromptAsync();
         }
     }
 
@@ -245,6 +251,26 @@ else
         _messages.Clear();
         Snackbar.Add("Assistance history cleared.", Severity.Success);
         await ScrollMessagesAsync();
+    }
+
+    private async Task FocusPromptAsync()
+    {
+        if (!_loaded || !(AuthSession.IsFarmAdmin || AuthSession.IsWorker))
+        {
+            return;
+        }
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("poultryFarmUi.focusCompose", _composeContainer);
+            if (_promptField is not null)
+            {
+                await _promptField.FocusAsync();
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     private async Task ScrollMessagesAsync()
