@@ -2540,10 +2540,12 @@ public sealed class MarketplaceController(
 
     private async Task<string> CreateUniqueUsernameAsync(string firstName, string lastName, CancellationToken cancellationToken)
     {
-        var stem = new string($"{firstName}{lastName}".Where(char.IsLetter).ToArray()).ToLowerInvariant();
-        if (stem.Length > 16)
+        var initial = new string(firstName.Where(char.IsLetter).Take(1).ToArray()).ToLowerInvariant();
+        var surname = new string(lastName.Where(char.IsLetter).ToArray()).ToLowerInvariant();
+        var stem = $"{initial}{surname}";
+        if (stem.Length > 40)
         {
-            stem = stem[..16];
+            stem = stem[..40];
         }
 
         if (string.IsNullOrWhiteSpace(stem))
@@ -2551,16 +2553,16 @@ public sealed class MarketplaceController(
             stem = "farm";
         }
 
-        for (var attempt = 0; attempt < 12; attempt++)
+        for (var attempt = 0; attempt < 20; attempt++)
         {
-            var candidate = $"{stem}{Random.Shared.Next(10000, 100000)}";
+            var candidate = $"{stem}{Random.Shared.Next(100, 1000)}";
             if (await userManager.FindByNameAsync(candidate) is null)
             {
                 return candidate;
             }
         }
 
-        return $"{stem}{Guid.NewGuid().ToString("N")[..8]}";
+        return $"{stem}{Random.Shared.Next(100000, 1000000)}";
     }
 
     private static string GenerateTemporaryPassword() =>
