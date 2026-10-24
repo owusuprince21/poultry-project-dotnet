@@ -34,25 +34,26 @@ public sealed class OpenAiFarmAssistantAgent(
             return localReply;
         }
 
-        // Only load farm records when the question likely needs them — this is the main latency win.
-        var farmContext = NeedsFarmData(prompt)
-            ? await BuildFarmContextAsync(companyId, cancellationToken)
-            : "No farm record snapshot loaded for this question (general advice mode).";
+        var farmContext = await BuildFarmContextAsync(companyId, cancellationToken);
 
         var input = $"""
-You are Poultry Farm Assistant — a practical helper for poultry farmers.
+You are the operations assistant for one poultry farm. Speak like a farm manager: direct, specific, and careful with numbers.
 
-Help with anything they need for poultry farming and farm business. Be creative and actionable.
-Prefer short, clear answers (about 80-180 words) unless the problem is complex or safety-critical.
-Use farm records when provided. Never invent this farm's numbers. General poultry knowledge is OK.
-Bird-health accounting: sick counts do not reduce stock; deaths do. Recovered reduces sick only; died reduces sick and stock.
-Answer directly — do not ask how you can help if they already asked something.
-If a vet is clearly needed, say so while still giving first-line practical steps.
+The farm records below are the complete history for this farm only. There is no 7-day cutoff.
+Use them for eggs, feed, batches, sick birds, deaths, medication, debeaking, sales, stock, listings, activity, and worker observations.
+Current sick birds is the net of every sick entry ever saved, including records from weeks or months ago, minus later recoveries and deaths.
+A flock is not healthy while that current sick count is above zero. Quote the batch, color, date, and cause from the records.
+Deaths reduce bird stock. Sick birds stay sick until a recovery or death is recorded against them.
+If the records do not contain what was asked, say there is no saved record for it. Never invent this farm's counts, dates, doses, or sales.
+When the user asks what was recorded for egg production or feed consumption, answer from those full lists, including older dates.
+You cannot save a new egg or feed entry from chat. If they ask you to record one, point them to the Egg Production or Feed page and still summarize what is already saved.
+General poultry knowledge is fine when it does not pretend to be this farm's data.
+Answer the question that was asked. Keep it clear. Use a short list when several records matter.
 
 User: {userDisplayName}
 Farm: {companyName}
 
-Farm context:
+Farm records:
 {farmContext}
 
 User message:
@@ -117,7 +118,12 @@ Farm records:
     private async Task<string?> TryAnswerLocallyAsync(Guid companyId, string userDisplayName, string prompt, CancellationToken cancellationToken)
     {
         var normalized = NormalizePrompt(prompt);
-        if (MentionsEggs(normalized) && MentionsInventoryIntent(normalized))
+        if (AsksAboutSickBirds(normalized))
+        {
+            return await DescribeCurrentSickAsync(companyId, userDisplayName, cancellationToken);
+        }
+
+        if (MentionsEggs(normalized) && MentionsInventoryIntent(normalized) && !AsksAboutSavedHistory(normalized))
         {
             var stock = await GetEggStockAsync(companyId, cancellationToken);
             if (MentionsOnlyUnsortedEggs(normalized))
@@ -182,73 +188,201 @@ Current egg inventory:
         return produced;
     }
 
+    private async Task<string> DescribeCurrentSickAsync(Guid companyId, string userDisplayName, CancellationToken cancellationToken)
+    {
+        var events = await dbContext.BirdHealthEvents
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .Select(x => new
+            {
+                x.Date,
+                x.Status,
+                x.Count,
+                x.Cause,
+                BatchNumber = x.Batch == null ? "Unknown batch" : x.Batch.BatchNumber,
+                Color = x.BatchVariant == null ? "unknown color" : x.BatchVariant.Color.ToString()
+            })
+            .ToListAsync(cancellationToken);
+
+        var openSick = events
+            .Where(x => x.Status == BirdHealthStatus.Sick)
+            .GroupBy(x => new { x.BatchNumber, x.Color })
+            .Select(group => new
+            {
+                group.Key.BatchNumber,
+                group.Key.Color,
+                Net = group.Sum(x => x.Count),
+                Since = group.Where(x => x.Count > 0).Select(x => (DateOnly?)x.Date).Min(),
+                Cause = group.Where(x => x.Count > 0).OrderByDescending(x => x.Date).Select(x => x.Cause).FirstOrDefault()
+            })
+            .Where(x => x.Net > 0)
+            .OrderBy(x => x.Since)
+            .ToList();
+        var deaths = events.Where(x => x.Status == BirdHealthStatus.Dead).Sum(x => x.Count);
+
+        if (openSick.Count == 0)
+        {
+            return deaths > 0
+                ? $"No sick birds are still open, {userDisplayName}. Deaths on record for this farm: {deaths:N0}."
+                : $"No sick birds or deaths are saved for this farm, {userDisplayName}.";
+        }
+
+        var lines = openSick.Select(x =>
+            $"- {x.BatchNumber} ({x.Color}): {x.Net:N0} still sick, first recorded {x.Since:yyyy-MM-dd}. Cause: {Trim(x.Cause, 160)}");
+        return $"""
+You currently have {openSick.Sum(x => x.Net):N0} sick birds still open, {userDisplayName}. This uses every sick record for the farm, including entries older than the last week.
+{string.Join(Environment.NewLine, lines)}
+Deaths on record: {deaths:N0}.
+""";
+    }
+
     private async Task<string> BuildFarmContextAsync(Guid companyId, CancellationToken cancellationToken)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var weekStart = today.AddDays(-7);
-
         var company = await dbContext.Companies
             .AsNoTracking()
             .Where(x => x.Id == companyId)
             .Select(x => new { x.Name, x.Code })
             .FirstOrDefaultAsync(cancellationToken);
 
-        var eggs = await dbContext.EggProductions
-            .AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.Date >= weekStart && x.Date <= today)
-            .SumAsync(x => x.SmallEggs + x.MediumEggs + x.LargeEggs + x.ExtraLargeEggs + x.UnsortedEggs, cancellationToken);
-
-        var feedKg = await dbContext.FeedConsumptions
-            .AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.Date >= weekStart && x.Date <= today)
-            .SumAsync(x => x.AmountKg, cancellationToken);
-
-        var deaths = await dbContext.BirdHealthEvents
-            .AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.Date >= weekStart && x.Date <= today && x.Status == BirdHealthStatus.Dead)
-            .SumAsync(x => x.Count, cancellationToken);
-
-        var sickBirds = await dbContext.BirdHealthEvents
-            .AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.Date >= weekStart && x.Date <= today && x.Status == BirdHealthStatus.Sick)
-            .SumAsync(x => x.Count, cancellationToken);
-
-        var activeBatches = await dbContext.Batches
-            .AsNoTracking()
-            .CountAsync(x => x.CompanyId == companyId && x.Status == BatchStatus.Active, cancellationToken);
-
-        var overdueMedication = await dbContext.Medications
-            .AsNoTracking()
-            .CountAsync(x => x.CompanyId == companyId && x.Status == ScheduleStatus.Overdue, cancellationToken);
-
-        var lowInventory = await dbContext.FeedStocks
-            .AsNoTracking()
-            .CountAsync(x => x.CompanyId == companyId && x.CurrentStockKg <= x.MinimumThresholdKg, cancellationToken);
-
-        var eggSales = await dbContext.EggSales
-            .AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.SaleDate >= weekStart && x.SaleDate <= today)
-            .SumAsync(x => x.GrandTotal, cancellationToken);
-
-        var birdSales = await dbContext.BirdSales
-            .AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.SaleDate >= weekStart && x.SaleDate <= today)
-            .SumAsync(x => x.TotalAmount, cancellationToken);
-
         var batches = await dbContext.Batches
             .AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.Status == BatchStatus.Active)
+            .Where(x => x.CompanyId == companyId)
             .OrderByDescending(x => x.ArrivalDate)
-            .Take(6)
             .Select(x => new
             {
                 x.BatchNumber,
                 x.BirdType,
                 x.Breed,
+                x.Status,
+                x.ArrivalDate,
                 x.CurrentCount,
                 x.InitialCount,
-                x.SurvivalRate
+                Colors = x.Variants.Select(v => new { v.Color, v.CurrentCount, v.InitialCount }).ToList()
             })
+            .ToListAsync(cancellationToken);
+
+        var health = await dbContext.BirdHealthEvents
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderBy(x => x.Date)
+            .Select(x => new
+            {
+                x.Date,
+                x.Status,
+                x.Count,
+                x.Cause,
+                BatchNumber = x.Batch == null ? "Unknown batch" : x.Batch.BatchNumber,
+                Color = x.BatchVariant == null ? "unknown color" : x.BatchVariant.Color.ToString()
+            })
+            .ToListAsync(cancellationToken);
+
+        var eggs = await dbContext.EggProductions
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderBy(x => x.Date)
+            .ThenBy(x => x.CollectionPeriod)
+            .Select(x => new
+            {
+                x.Date,
+                x.CollectionPeriod,
+                x.CollectionType,
+                x.EggColor,
+                BatchNumber = x.Batch == null ? "Unknown batch" : x.Batch.BatchNumber,
+                Total = x.SmallEggs + x.MediumEggs + x.LargeEggs + x.ExtraLargeEggs + x.UnsortedEggs,
+                x.SmallEggs,
+                x.MediumEggs,
+                x.LargeEggs,
+                x.ExtraLargeEggs,
+                x.UnsortedEggs
+            })
+            .ToListAsync(cancellationToken);
+
+        var feed = await dbContext.FeedConsumptions
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderBy(x => x.Date)
+            .ThenBy(x => x.CollectionPeriod)
+            .Select(x => new
+            {
+                x.Date,
+                x.CollectionPeriod,
+                x.AmountKg,
+                x.BagsUsed,
+                BatchNumber = x.Batch == null ? "Unknown batch" : x.Batch.BatchNumber,
+                FeedName = x.FeedConfiguration == null ? x.FeedType.ToString() : x.FeedConfiguration.Name
+            })
+            .ToListAsync(cancellationToken);
+
+        var medications = await dbContext.Medications
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderBy(x => x.ScheduledDate)
+            .Select(x => new
+            {
+                x.ScheduledDate,
+                x.MedicationName,
+                x.Dosage,
+                x.Status,
+                x.Purpose,
+                BatchNumber = x.Batch == null ? "Unknown batch" : x.Batch.BatchNumber
+            })
+            .ToListAsync(cancellationToken);
+
+        var debeaking = await dbContext.DebeakingSchedules
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderBy(x => x.ScheduledDate)
+            .Select(x => new
+            {
+                x.ScheduledDate,
+                x.DebeakingType,
+                x.Status,
+                x.BirdAgeWeeks,
+                BatchNumber = x.Batch == null ? "Unknown batch" : x.Batch.BatchNumber
+            })
+            .ToListAsync(cancellationToken);
+
+        var eggSales = await dbContext.EggSales
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderBy(x => x.SaleDate)
+            .Select(x => new { x.SaleDate, x.BuyerName, x.GrandTotal, x.PaymentStatus })
+            .ToListAsync(cancellationToken);
+
+        var birdSales = await dbContext.BirdSales
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderBy(x => x.SaleDate)
+            .Select(x => new
+            {
+                x.SaleDate,
+                x.BuyerName,
+                x.BirdsSold,
+                x.TotalAmount,
+                BatchNumber = x.Batch == null ? "Unknown batch" : x.Batch.BatchNumber
+            })
+            .ToListAsync(cancellationToken);
+
+        var observations = await dbContext.DailyObservations
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderBy(x => x.Date)
+            .Select(x => new { x.Date, x.Category, x.AuthorName, x.Notes })
+            .ToListAsync(cancellationToken);
+
+        var listings = await dbContext.MarketplaceListings
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderByDescending(x => x.CreatedAt)
+            .Select(x => new { x.Title, x.ListingType, x.Status, x.QuantityOffered, x.UnitLabel, x.PriceAmount })
+            .ToListAsync(cancellationToken);
+
+        var posts = await dbContext.FarmActivityPosts
+            .AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .OrderBy(x => x.CreatedAt)
+            .Select(x => new { x.CreatedAt, x.Title, x.Body, x.IsPublished })
             .ToListAsync(cancellationToken);
 
         var feedStocks = await dbContext.FeedStockLots
@@ -267,85 +401,146 @@ Current egg inventory:
                 Kg = x.Sum(lot => lot.BagsRemaining * lot.BagSizeKg)
             })
             .OrderBy(x => x.FeedName)
-            .Take(8)
             .ToListAsync(cancellationToken);
+
+        var stock = await GetEggStockAsync(companyId, cancellationToken);
+        var currentSick = Math.Max(0, health.Where(x => x.Status == BirdHealthStatus.Sick).Sum(x => x.Count));
+        var deaths = health.Where(x => x.Status == BirdHealthStatus.Dead).Sum(x => x.Count);
+        var producedEggs = eggs.Sum(x => x.Total);
 
         var sb = new StringBuilder();
-        sb.AppendLine($"Company: {company?.Name ?? "Unknown"} ({company?.Code ?? "N/A"})");
-        sb.AppendLine($"Date: {today:yyyy-MM-dd}; last 7 days summary");
-        sb.AppendLine($"Eggs: {eggs:N0}; feed used: {feedKg:N1} kg; deaths: {deaths:N0}; sick: {sickBirds:N0}");
-        sb.AppendLine($"Active batches: {activeBatches:N0}; overdue meds: {overdueMedication:N0}; low feed items: {lowInventory:N0}");
-        sb.AppendLine($"Sales value (7d): {(eggSales + birdSales):N2}");
+        sb.AppendLine($"Farm: {company?.Name ?? "Unknown"} ({company?.Code ?? "N/A"})");
+        sb.AppendLine($"Today: {today:yyyy-MM-dd}. Scope: every saved record for this farm. No recent-day limit.");
+        sb.AppendLine($"Current sick birds still open: {currentSick:N0}. Total deaths: {deaths:N0}.");
+        sb.AppendLine($"Eggs produced, all dates: {producedEggs:N0}. Eggs still available: small {stock.Small:N0}, medium {stock.Medium:N0}, large {stock.Large:N0}, jumbo {stock.ExtraLarge:N0}, unsorted {stock.Unsorted:N0}, total {stock.TotalEggs:N0}.");
+        sb.AppendLine($"Feed used, all dates: {feed.Sum(x => x.AmountKg):N1} kg. Egg sales: {eggSales.Sum(x => x.GrandTotal):N2}. Bird sales: {birdSales.Sum(x => x.TotalAmount):N2}.");
+        sb.AppendLine("If a section says none, that record type has not been saved.");
 
-        sb.AppendLine("Active batches:");
-        if (batches.Count == 0)
+        sb.AppendLine("Batches:");
+        AppendOrNone(sb, batches.Count == 0);
+        foreach (var batch in batches)
         {
-            sb.AppendLine("- None");
-        }
-        else
-        {
-            foreach (var batch in batches)
-            {
-                sb.AppendLine($"- {batch.BatchNumber}: {batch.BirdType}/{batch.Breed}, current {batch.CurrentCount:N0}/{batch.InitialCount:N0}, survival {batch.SurvivalRate:N1}%");
-            }
-        }
-
-        sb.AppendLine("Feed stock:");
-        if (feedStocks.Count == 0)
-        {
-            sb.AppendLine("- None");
-        }
-        else
-        {
-            foreach (var stock in feedStocks)
-            {
-                sb.AppendLine($"- {stock.FeedName} {stock.BagSizeKg}kg: {stock.Bags:N0} bags ({stock.Kg:N1} kg)");
-            }
+            var colors = batch.Colors.Count == 0
+                ? "no colors"
+                : string.Join(", ", batch.Colors.Select(v => $"{v.Color} {v.CurrentCount:N0}/{v.InitialCount:N0}"));
+            var survival = batch.InitialCount <= 0 ? 0 : Math.Round((decimal)batch.CurrentCount / batch.InitialCount * 100m, 1);
+            sb.AppendLine($"- {batch.BatchNumber}: {batch.Status} {batch.BirdType}/{batch.Breed}, arrived {batch.ArrivalDate:yyyy-MM-dd}, birds {batch.CurrentCount:N0}/{batch.InitialCount:N0}, survival {survival:N1}%. Colors: {colors}");
         }
 
-        var observations = await dbContext.DailyObservations
-            .AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.Date >= today.AddDays(-14) && x.Date <= today)
-            .OrderByDescending(x => x.CreatedAt)
-            .Take(12)
-            .ToListAsync(cancellationToken);
-
-        sb.AppendLine("Worker observations (14 days):");
-        if (observations.Count == 0)
+        sb.AppendLine("Bird health, every entry:");
+        AppendOrNone(sb, health.Count == 0);
+        foreach (var item in health)
         {
-            sb.AppendLine("- None");
+            sb.AppendLine($"- {item.Date:yyyy-MM-dd} {item.Status} {item.Count:N0} {item.BatchNumber} {item.Color}. Cause: {Trim(item.Cause, 160)}");
         }
-        else
+
+        sb.AppendLine("Egg production, every entry:");
+        AppendOrNone(sb, eggs.Count == 0);
+        foreach (var item in eggs)
         {
-            foreach (var observation in observations)
-            {
-                sb.AppendLine($"- {observation.Date:yyyy-MM-dd} {observation.Category} by {observation.AuthorName}: {Trim(observation.Notes, 240)}");
-                if (!string.IsNullOrWhiteSpace(observation.Recommendation))
-                {
-                    sb.AppendLine($"  Advice already sent: {Trim(observation.Recommendation, 240)}");
-                }
-            }
+            sb.AppendLine($"- {item.Date:yyyy-MM-dd} {item.CollectionPeriod} {item.CollectionType} {item.EggColor} {item.BatchNumber}: {item.Total:N0} eggs (small {item.SmallEggs:N0}, medium {item.MediumEggs:N0}, large {item.LargeEggs:N0}, jumbo {item.ExtraLargeEggs:N0}, unsorted {item.UnsortedEggs:N0})");
+        }
+
+        sb.AppendLine("Feed consumption, every entry:");
+        AppendOrNone(sb, feed.Count == 0);
+        foreach (var item in feed)
+        {
+            sb.AppendLine($"- {item.Date:yyyy-MM-dd} {item.CollectionPeriod} {item.BatchNumber} {item.FeedName}: {item.AmountKg:N1} kg, {item.BagsUsed:N0} bags");
+        }
+
+        sb.AppendLine("Feed stock on hand:");
+        AppendOrNone(sb, feedStocks.Count == 0);
+        foreach (var item in feedStocks)
+        {
+            sb.AppendLine($"- {item.FeedName} {item.BagSizeKg}kg: {item.Bags:N0} bags ({item.Kg:N1} kg)");
+        }
+
+        sb.AppendLine("Medication, every entry:");
+        AppendOrNone(sb, medications.Count == 0);
+        foreach (var item in medications)
+        {
+            sb.AppendLine($"- {item.ScheduledDate:yyyy-MM-dd} {item.Status} {item.BatchNumber} {item.MedicationName}, dose {Trim(item.Dosage, 80)}, purpose {Trim(item.Purpose, 80)}");
+        }
+
+        sb.AppendLine("Debeaking, every entry:");
+        AppendOrNone(sb, debeaking.Count == 0);
+        foreach (var item in debeaking)
+        {
+            sb.AppendLine($"- {item.ScheduledDate:yyyy-MM-dd} {item.Status} {item.BatchNumber} {item.DebeakingType}, age {item.BirdAgeWeeks} weeks");
+        }
+
+        sb.AppendLine("Egg sales, every entry:");
+        AppendOrNone(sb, eggSales.Count == 0);
+        foreach (var item in eggSales)
+        {
+            sb.AppendLine($"- {item.SaleDate:yyyy-MM-dd} {item.BuyerName}: {item.GrandTotal:N2}, {item.PaymentStatus}");
+        }
+
+        sb.AppendLine("Bird sales, every entry:");
+        AppendOrNone(sb, birdSales.Count == 0);
+        foreach (var item in birdSales)
+        {
+            sb.AppendLine($"- {item.SaleDate:yyyy-MM-dd} {item.BatchNumber} {item.BuyerName}: {item.BirdsSold:N0} birds, {item.TotalAmount:N2}");
+        }
+
+        sb.AppendLine("Worker observations, every entry:");
+        AppendOrNone(sb, observations.Count == 0);
+        foreach (var item in observations)
+        {
+            sb.AppendLine($"- {item.Date:yyyy-MM-dd} {item.Category} by {item.AuthorName}: {Trim(item.Notes, 240)}");
+        }
+
+        sb.AppendLine("Marketplace listings:");
+        AppendOrNone(sb, listings.Count == 0);
+        foreach (var item in listings)
+        {
+            sb.AppendLine($"- {item.Status} {item.ListingType} {item.Title}: {item.QuantityOffered:N0} {item.UnitLabel}, price {item.PriceAmount:N2}");
+        }
+
+        sb.AppendLine("Farm activity posts:");
+        AppendOrNone(sb, posts.Count == 0);
+        foreach (var item in posts)
+        {
+            sb.AppendLine($"- {item.CreatedAt:yyyy-MM-dd} {(item.IsPublished ? "published" : "draft")} {item.Title}: {Trim(item.Body, 180)}");
         }
 
         return sb.ToString();
     }
 
+    private static void AppendOrNone(StringBuilder sb, bool empty)
+    {
+        if (empty)
+        {
+            sb.AppendLine("- None saved");
+        }
+    }
+
     private static string Trim(string? value, int max) =>
         string.IsNullOrWhiteSpace(value) ? "none" : value.Length <= max ? value.Trim() : value.Trim()[..max] + "...";
 
-    private static bool NeedsFarmData(string prompt)
-    {
-        var normalized = NormalizePrompt(prompt);
-        string[] keywords =
-        [
-            "egg", "feed", "batch", "stock", "inventory", "sale", "sold", "medication", "medicine", "vaccine",
-            "sick", "dead", "death", "mortality", "debeak", "production", "layer", "broiler", "bird count",
-            "how many", "available", "overdue", "schedule", "record", "report", "observation", "today", "this week",
-            "my farm", "our farm", "current", "status", "profit", "revenue", "buyer", "listing"
-        ];
+    private static bool AsksAboutSickBirds(string normalizedPrompt) =>
+        (normalizedPrompt.Contains("sick", StringComparison.Ordinal) || normalizedPrompt.Contains("ill bird", StringComparison.Ordinal)) &&
+        (normalizedPrompt.Contains("how many", StringComparison.Ordinal) ||
+         normalizedPrompt.Contains("how much", StringComparison.Ordinal) ||
+         normalizedPrompt.Contains("do i have", StringComparison.Ordinal) ||
+         normalizedPrompt.Contains("do we have", StringComparison.Ordinal) ||
+         normalizedPrompt.Contains("current", StringComparison.Ordinal) ||
+         normalizedPrompt.Contains("still", StringComparison.Ordinal) ||
+         normalizedPrompt.Contains("any sick", StringComparison.Ordinal) ||
+         normalizedPrompt.Contains("healthy", StringComparison.Ordinal));
 
-        return keywords.Any(keyword => normalized.Contains(keyword, StringComparison.Ordinal));
-    }
+    private static bool AsksAboutSavedHistory(string normalizedPrompt) =>
+        normalizedPrompt.Contains("produc", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("collect", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("record", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("morning", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("afternoon", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("evening", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("yesterday", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("last week", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("last month", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("history", StringComparison.Ordinal) ||
+        normalizedPrompt.Contains("feed", StringComparison.Ordinal);
 
     private static string NormalizePrompt(string prompt) =>
         prompt.Trim().ToLowerInvariant();
@@ -419,7 +614,7 @@ Current egg inventory:
         return $"""
 I cannot reach the AI service right now, {userDisplayName}. Please try again in a moment.
 
-For farm records such as egg inventory, feed stock, sales, medication, mortality, or batch status, ask me directly and I will check the saved records I can access.
+For farm records such as egg production, feed use, sick birds, deaths, sales, medication, or batch status, ask me directly. I check the full saved history for this farm.
 """;
     }
 
