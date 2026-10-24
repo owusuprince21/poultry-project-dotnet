@@ -18,9 +18,9 @@ public sealed class OpenAiFarmAssistantAgent(
             .Select(x => x.Name)
             .FirstOrDefaultAsync(cancellationToken) ?? "your farm";
 
-        if (IsPureGreeting(prompt))
+        if (IsCasualMessage(prompt))
         {
-            return $"Hello {userDisplayName}! It is great to assist you today. How can I help you manage {companyName}?";
+            return $"Hello {userDisplayName}. How can I help you with {companyName}?";
         }
 
         if (IsSimpleAcknowledgement(prompt))
@@ -34,21 +34,21 @@ public sealed class OpenAiFarmAssistantAgent(
             return localReply;
         }
 
-        var farmContext = await BuildFarmContextAsync(companyId, cancellationToken);
+        var wantsFarmRecords = NeedsFarmData(prompt);
+        var farmContext = wantsFarmRecords
+            ? await BuildFarmContextAsync(companyId, cancellationToken)
+            : "No farm records were requested.";
 
         var input = $"""
-You are the operations assistant for one poultry farm. Speak like a farm manager: direct, specific, and careful with numbers.
+You are the operations assistant for one poultry farm. Be brief and answer only what the user asked.
 
-The farm records below are the complete history for this farm only. There is no 7-day cutoff.
-Use them for eggs, feed, batches, sick birds, deaths, medication, debeaking, sales, stock, listings, activity, and worker observations.
-Current sick birds is the net of every sick entry ever saved, including records from weeks or months ago, minus later recoveries and deaths.
-A flock is not healthy while that current sick count is above zero. Quote the batch, color, date, and cause from the records.
-Deaths reduce bird stock. Sick birds stay sick until a recovery or death is recorded against them.
+A greeting or small comment gets one or two short sentences. Do not introduce yourself as the farm manager, and do not attach a status update.
+Use the farm records only when the user asks about this farm's eggs, feed, birds, health, medication, sales, stock, batches, or other saved activity.
+When they do ask, answer that question from the complete history below. Do not add eggs, feed, sales, sick birds, or batch counts they did not ask about.
+Current sick birds is the net of every sick entry ever saved, including older dates, minus later recoveries and deaths. Quote batch, color, date, and cause when health was asked about.
 If the records do not contain what was asked, say there is no saved record for it. Never invent this farm's counts, dates, doses, or sales.
-When the user asks what was recorded for egg production or feed consumption, answer from those full lists, including older dates.
-You cannot save a new egg or feed entry from chat. If they ask you to record one, point them to the Egg Production or Feed page and still summarize what is already saved.
+You cannot save a new egg or feed entry from chat. If they ask you to record one, point them to the Egg Production or Feed page.
 General poultry knowledge is fine when it does not pretend to be this farm's data.
-Answer the question that was asked. Keep it clear. Use a short list when several records matter.
 
 User: {userDisplayName}
 Farm: {companyName}
@@ -564,14 +564,45 @@ Deaths on record: {deaths:N0}.
         !normalizedPrompt.Contains("large", StringComparison.OrdinalIgnoreCase) &&
         !normalizedPrompt.Contains("jumbo", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsPureGreeting(string prompt)
+    private static bool IsCasualMessage(string prompt)
     {
-        var normalized = prompt
+        var words = prompt
             .Trim()
-            .Trim('.', '!', '?', ',', ';', ':')
-            .ToLowerInvariant();
+            .ToLowerInvariant()
+            .Split([' ', ',', '.', '!', '?', ';', ':', '\'', '"'], StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length is 0 or > 8)
+        {
+            return false;
+        }
 
-        return normalized is "hi" or "hello" or "hey" or "good morning" or "good afternoon" or "good evening" or "greetings";
+        string[] allowed =
+        [
+            "hi", "hello", "hey", "hiya", "howdy", "yo", "good", "morning", "afternoon", "evening",
+            "greetings", "what", "whats", "what's", "up", "how", "are", "you", "doing", "today",
+            "friend", "buddy", "boss", "there", "pal", "mate", "sir", "dear", "my", "please"
+        ];
+        if (!words.All(word => allowed.Contains(word)))
+        {
+            return false;
+        }
+
+        return words.Any(word => word is "hi" or "hello" or "hey" or "hiya" or "howdy" or "yo" or "greetings" or "morning" or "afternoon" or "evening" or "up")
+            || (words.Contains("how") && words.Contains("you"));
+    }
+
+    private static bool NeedsFarmData(string prompt)
+    {
+        var normalized = NormalizePrompt(prompt);
+        string[] keywords =
+        [
+            "egg", "feed", "batch", "stock", "inventory", "sale", "sold", "medication", "medicine", "vaccine",
+            "sick", "dead", "death", "mortality", "health", "healthy", "debeak", "production", "layer", "broiler",
+            "bird", "flock", "how many", "how much", "available", "overdue", "schedule", "record", "report",
+            "observation", "today", "yesterday", "week", "month", "status", "update", "summary", "overview",
+            "my farm", "our farm", "profit", "revenue", "buyer", "listing", "activity"
+        ];
+
+        return keywords.Any(keyword => normalized.Contains(keyword, StringComparison.Ordinal));
     }
 
     private static bool IsSimpleAcknowledgement(string prompt)
@@ -603,8 +634,7 @@ Deaths on record: {deaths:N0}.
         string prompt,
         AssistantFallbackReason reason)
     {
-        var lowerPrompt = prompt.Trim().ToLowerInvariant();
-        if (lowerPrompt is "hi" or "hello" or "hey" or "good morning" or "good afternoon" or "good evening")
+        if (IsCasualMessage(prompt))
         {
             return $"Hi, {userDisplayName}. How can I help you with your poultry farm work today?";
         }
