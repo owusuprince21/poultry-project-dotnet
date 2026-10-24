@@ -224,64 +224,79 @@ public sealed class MarketplaceController(
             cancellationToken);
 
         var normalizedFarmName = registration.FarmName.Trim().ToLowerInvariant();
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        var company = await dbContext.Companies
-            .FirstOrDefaultAsync(x => x.Name.ToLower() == normalizedFarmName, cancellationToken);
-        if (company is null)
-        {
-            company = new Company
-            {
-                Name = registration.FarmName.Trim(),
-                Code = await NextCompanyCodeAsync(cancellationToken),
-                Email = registration.Email,
-                Phone = registration.Phone,
-                Address = registration.Location,
-                IsActive = true
-            };
-            dbContext.Companies.Add(company);
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-
         var temporaryPassword = string.IsNullOrWhiteSpace(request.TemporaryPassword)
             ? GenerateTemporaryPassword()
             : request.TemporaryPassword.Trim();
+        Company? company = null;
+        ApplicationUser? farmAdmin = null;
+        (string RawToken, DateTimeOffset ExpiresAt)? invite = null;
+        string[]? createErrors = null;
 
-        var farmAdmin = new ApplicationUser
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
         {
-            UserName = username,
-            Email = registration.Email,
-            FirstName = registration.ContactFirstName,
-            LastName = registration.ContactLastName,
-            CompanyId = company.Id,
-            FarmRole = UserRole.Admin,
-            IsSystemAdmin = false,
-            MustChangePassword = true,
-            EmailConfirmed = true
-        };
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            company = await dbContext.Companies
+                .FirstOrDefaultAsync(x => x.Name.ToLower() == normalizedFarmName, cancellationToken);
+            if (company is null)
+            {
+                company = new Company
+                {
+                    Name = registration.FarmName.Trim(),
+                    Code = await NextCompanyCodeAsync(cancellationToken),
+                    Email = registration.Email,
+                    Phone = registration.Phone,
+                    Address = registration.Location,
+                    IsActive = true
+                };
+                dbContext.Companies.Add(company);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
 
-        var createResult = await userManager.CreateAsync(farmAdmin, temporaryPassword);
-        if (!createResult.Succeeded)
+            farmAdmin = new ApplicationUser
+            {
+                UserName = username,
+                Email = registration.Email,
+                FirstName = registration.ContactFirstName,
+                LastName = registration.ContactLastName,
+                CompanyId = company.Id,
+                FarmRole = UserRole.Admin,
+                IsSystemAdmin = false,
+                MustChangePassword = true,
+                EmailConfirmed = true
+            };
+
+            var createResult = await userManager.CreateAsync(farmAdmin, temporaryPassword);
+            if (!createResult.Succeeded)
+            {
+                createErrors = createResult.Errors.Select(x => x.Description).ToArray();
+                await transaction.RollbackAsync(cancellationToken);
+                return;
+            }
+
+            await userManager.AddToRoleAsync(farmAdmin, "Admin");
+
+            invite = await CreatePasswordInviteAsync(farmAdmin.Id, cancellationToken);
+
+            registration.Status = FarmerRegistrationStatus.Approved;
+            registration.ReviewedAt = DateTimeOffset.UtcNow;
+            registration.ReviewedByUserId = GetCurrentUserId();
+            registration.ReviewNotes = request.ReviewNotes?.Trim();
+            registration.CompanyId = company.Id;
+            registration.FarmAdminUserId = farmAdmin.Id;
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        });
+
+        if (createErrors is not null || company is null || farmAdmin is null || invite is null)
         {
-            await transaction.RollbackAsync(cancellationToken);
-            return BadRequest(new { detail = createResult.Errors.Select(x => x.Description).ToArray() });
+            return BadRequest(new { detail = createErrors ?? ["The farm could not be approved."] });
         }
 
-        await userManager.AddToRoleAsync(farmAdmin, "Admin");
-
-        var invite = await CreatePasswordInviteAsync(farmAdmin.Id, cancellationToken);
-
-        registration.Status = FarmerRegistrationStatus.Approved;
-        registration.ReviewedAt = DateTimeOffset.UtcNow;
-        registration.ReviewedByUserId = GetCurrentUserId();
-        registration.ReviewNotes = request.ReviewNotes?.Trim();
-        registration.CompanyId = company.Id;
-        registration.FarmAdminUserId = farmAdmin.Id;
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-
+        var issuedInvite = invite.Value;
         var farmAppBase = configuration["Apps:FarmBlazorBaseUrl"] ?? "http://localhost:5083";
-        var inviteUrl = $"{farmAppBase.TrimEnd('/')}/setup-password?token={Uri.EscapeDataString(invite.RawToken)}";
+        var inviteUrl = $"{farmAppBase.TrimEnd('/')}/setup-password?token={Uri.EscapeDataString(issuedInvite.RawToken)}";
 
         var emailSent = await SendApprovalInviteEmailAsync(
             registration.Email,
@@ -289,7 +304,7 @@ public sealed class MarketplaceController(
             registration.FarmName,
             username,
             inviteUrl,
-            invite.ExpiresAt,
+            issuedInvite.ExpiresAt,
             cancellationToken);
 
         await audit.WriteAsync(
@@ -310,9 +325,9 @@ public sealed class MarketplaceController(
             farmAdmin.Id,
             username,
             temporaryPassword,
-            invite.RawToken,
+            issuedInvite.RawToken,
             inviteUrl,
-            invite.ExpiresAt,
+            issuedInvite.ExpiresAt,
             emailSent));
     }
 
