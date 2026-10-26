@@ -151,6 +151,7 @@ else
 var app = builder.Build();
 
 await app.Services.ApplyMigrationsAsync();
+await app.Services.EnsureIdentityRolesAsync();
 
 if (app.Environment.IsDevelopment())
 {

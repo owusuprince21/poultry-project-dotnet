@@ -90,20 +90,31 @@ public static class DevelopmentDataSeeder
         await dbContext.Database.MigrateAsync();
     }
 
-    public static async Task SeedDevelopmentDataAsync(this IServiceProvider services)
+    public static async Task EnsureIdentityRolesAsync(this IServiceProvider services)
     {
         using var scope = services.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
 
         foreach (var role in new[] { "SystemAdmin", "SubAdmin", "Admin", "Worker" })
         {
             if (!await roleManager.RoleExistsAsync(role))
             {
-                await roleManager.CreateAsync(new IdentityRole<Guid>(role));
+                var result = await roleManager.CreateAsync(new IdentityRole<Guid>(role));
+                if (!result.Succeeded)
+                {
+                    throw new InvalidOperationException(string.Join("; ", result.Errors.Select(x => x.Description)));
+                }
             }
         }
+    }
+
+    public static async Task SeedDevelopmentDataAsync(this IServiceProvider services)
+    {
+        await services.EnsureIdentityRolesAsync();
+
+        using var scope = services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
 
         var company = await dbContext.Companies.FirstOrDefaultAsync(x => x.Code == "DEMOFARM01");
         if (company is null)
